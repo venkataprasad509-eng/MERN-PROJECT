@@ -1,10 +1,10 @@
+
 const supabase = require('../config/supabase');
 const { ApiError } = require('../middleware/errorHandler');
 const { mockCourses } = require('../data/mockCourses');
 
 /**
- * Convert a Supabase database row into the course format
- * expected by the existing frontend.
+ * Convert a Supabase database row into the frontend course format.
  */
 function formatCourse(row) {
   return {
@@ -43,11 +43,13 @@ function formatCourse(row) {
 }
 
 /**
- * Convert frontend course fields to Supabase database columns.
+ * Convert frontend course fields to database columns.
  */
 function toDatabase(data) {
   const result = {};
+
   const fields = {
+    legacyId: 'legacy_id',
     title: 'title',
     shortDescription: 'short_description',
     description: 'description',
@@ -83,10 +85,11 @@ function toDatabase(data) {
     }
   }
 
-  // Keep the database image URL and frontend thumbnail synchronized.
+  // Keep thumbnail and image URL synchronized.
   if (data.thumbnail !== undefined && data.imageUrl === undefined) {
     result.image_url = data.thumbnail;
   }
+
   if (data.imageUrl !== undefined && data.thumbnail === undefined) {
     result.thumbnail = data.imageUrl;
   }
@@ -94,34 +97,49 @@ function toDatabase(data) {
   return result;
 }
 
+/**
+ * Find a course by its legacy or numeric database ID.
+ */
 async function getRowById(id) {
   const strId = String(id);
 
-  // 1. First attempt database query
   try {
     let query;
+
     if (strId.startsWith('course-')) {
-      query = supabase.from('courses').select('*').eq('legacy_id', strId);
+      query = supabase
+        .from('courses')
+        .select('*')
+        .eq('legacy_id', strId);
     } else if (/^\d+$/.test(strId)) {
-      query = supabase.from('courses').select('*').eq('id', Number(strId));
+      query = supabase
+        .from('courses')
+        .select('*')
+        .eq('id', Number(strId));
     }
 
     if (query) {
       const { data, error } = await query.maybeSingle();
+
       if (!error && data) {
         return formatCourse(data);
       }
     }
   } catch (_) {
-    // Database fallback to mock data
+    // Continue to the mock-data fallback.
   }
 
-  // 2. Fallback to mockCourses list
   const mockMatch = mockCourses.find(
-    (c) => String(c.id) === strId || String(c.id).replace('course-', '') === strId
+    (course) =>
+      String(course.id) === strId ||
+      String(course.id).replace('course-', '') === strId
   );
+
   if (mockMatch) {
-    return { ...mockMatch, price: Number(mockMatch.price || 0) };
+    return {
+      ...mockMatch,
+      price: Number(mockMatch.price || 0),
+    };
   }
 
   throw new ApiError(`Course with id '${id}' not found`, 404);
@@ -129,13 +147,57 @@ async function getRowById(id) {
 
 function handleDatabaseError(error) {
   if (error) {
-    throw new ApiError(error.message || 'Database operation failed', 500);
+    throw new ApiError(
+      error.message || 'Database operation failed',
+      500
+    );
   }
 }
 
 const courseService = {
   /**
-   * Get published courses with filtering, sorting and pagination.
+   * Get all courses for the admin dashboard.
+   */
+  async getAllCoursesAdmin() {
+    const { data, error } = await supabase
+      .from('courses')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    handleDatabaseError(error);
+
+    return (data || []).map(formatCourse);
+  },
+
+  /**
+   * Get courses belonging to a specific instructor.
+   * Uses the authenticated user's Supabase client.
+   */
+  async getInstructorCourses(userSupabase, instructorId) {
+    if (!userSupabase) {
+      throw new ApiError(
+        'Authenticated database client is missing',
+        500
+      );
+    }
+
+    if (!instructorId) {
+      throw new ApiError('Instructor ID is missing', 400);
+    }
+
+    const { data, error } = await userSupabase
+      .from('courses')
+      .select('*')
+      .eq('instructor_id', instructorId)
+      .order('created_at', { ascending: false });
+
+    handleDatabaseError(error);
+
+    return (data || []).map(formatCourse);
+  },
+
+  /**
+   * Get courses with filtering, sorting and pagination.
    */
   async getAllCourses({
     search,
@@ -150,7 +212,7 @@ const courseService = {
     featured,
     trending,
     topRated,
-  }) {
+  } = {}) {
     let query = supabase.from('courses').select('*');
 
     if (featured === 'true' || featured === true) {
@@ -176,20 +238,25 @@ const courseService = {
 
     if (search) {
       const q = search.toLowerCase();
+
       result = result.filter(
-        (c) =>
-          c.title.toLowerCase().includes(q) ||
-          c.instructor.toLowerCase().includes(q) ||
-          c.category.toLowerCase().includes(q)
+        (course) =>
+          (course.title || '').toLowerCase().includes(q) ||
+          (course.instructor || '').toLowerCase().includes(q) ||
+          (course.category || '').toLowerCase().includes(q)
       );
     }
 
     if (minPrice !== undefined) {
-      result = result.filter((c) => c.price >= Number(minPrice));
+      result = result.filter(
+        (course) => course.price >= Number(minPrice)
+      );
     }
 
     if (maxPrice !== undefined) {
-      result = result.filter((c) => c.price <= Number(maxPrice));
+      result = result.filter(
+        (course) => course.price <= Number(maxPrice)
+      );
     }
 
     if (level) {
@@ -197,30 +264,40 @@ const courseService = {
         .split(',')
         .map((value) => value.trim().toLowerCase());
 
-      result = result.filter((c) => levels.includes(c.level.toLowerCase()));
+      result = result.filter(
+        (course) => levels.includes(course.level.toLowerCase())
+      );
     }
 
     if (minRating !== undefined) {
-      result = result.filter((c) => c.rating >= Number(minRating));
+      result = result.filter(
+        (course) => course.rating >= Number(minRating)
+      );
     }
 
     switch (sort) {
       case 'price_asc':
         result.sort((a, b) => a.price - b.price);
         break;
+
       case 'price_desc':
         result.sort((a, b) => b.price - a.price);
         break;
+
       case 'rating_desc':
         result.sort((a, b) => b.rating - a.rating);
         break;
+
       case 'newest':
         result.sort(
           (a, b) => new Date(b.createdAt) - new Date(a.createdAt)
         );
         break;
+
       case 'popular':
-        result.sort((a, b) => b.enrolledStudents - a.enrolledStudents);
+        result.sort(
+          (a, b) => b.enrolledStudents - a.enrolledStudents
+        );
         break;
     }
 
@@ -243,29 +320,49 @@ const courseService = {
     };
   },
 
-  /** Get one course by its legacy or numeric database ID. */
+  /** Get one course by its ID. */
   async getCourseById(id) {
-    return await getRowById(id);
+    return getRowById(id);
   },
 
-  /** Create a course in Supabase. */
-  async createCourse(data) {
+  /**
+   * Create a course using the authenticated user's Supabase client.
+   */
+  async createCourse(data, userSupabase) {
+    if (!userSupabase) {
+      throw new ApiError(
+        'Authenticated database client is missing',
+        500
+      );
+    }
+
+    if (!data.instructorId) {
+      throw new ApiError('Instructor ID is missing', 400);
+    }
+
     const legacyId = `course-${Date.now()}`;
-    const payload = toDatabase({ ...data, legacyId });
-    const { data: created, error } = await supabase
+
+    const payload = toDatabase({
+      ...data,
+      legacyId,
+    });
+
+    const { data: created, error } = await userSupabase
       .from('courses')
       .insert(payload)
       .select('*')
       .single();
 
     handleDatabaseError(error);
+
     return formatCourse(created);
   },
 
-  /** Update a course by its legacy or numeric database ID. */
+  /** Update a course. */
   async updateCourse(id, data) {
     const current = await getRowById(id);
     const payload = toDatabase(data);
+
     const { data: updated, error } = await supabase
       .from('courses')
       .update(payload)
@@ -274,37 +371,36 @@ const courseService = {
       .single();
 
     handleDatabaseError(error);
+
     return formatCourse(updated);
   },
 
-  /** Delete a course by its legacy or numeric database ID. */
+  /** Delete a course. */
   async deleteCourse(id) {
     const current = await getRowById(id);
+
     const { error } = await supabase
       .from('courses')
       .delete()
       .eq('id', current.databaseId || current.id);
 
     handleDatabaseError(error);
+
     return true;
   },
 
-  /** Get featured courses. */
   async getFeatured() {
     return this.getAllCourses({ featured: true, limit: 4 });
   },
 
-  /** Get trending courses. */
   async getTrending() {
     return this.getAllCourses({ trending: true, limit: 4 });
   },
 
-  /** Get top-rated courses. */
   async getTopRated() {
     return this.getAllCourses({ topRated: true, limit: 4 });
   },
 
-  /** Get courses by category. */
   async getByCategory(category, query = {}) {
     return this.getAllCourses({ ...query, category });
   },

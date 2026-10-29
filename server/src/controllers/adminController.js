@@ -1,3 +1,4 @@
+
 const { courseService } = require('../services/courseService');
 const { enrollmentService } = require('../services/enrollmentService');
 const { mockCategories } = require('../data/mockCategories');
@@ -5,48 +6,101 @@ const { asyncHandler } = require('../middleware/errorHandler');
 
 const adminController = {
   getDashboard: asyncHandler(async (_req, res) => {
-    const allCourses = courseService.getAllCoursesAdmin();
-    const allEnrollments = enrollmentService.getAllEnrollments();
+    const [allCourses, allEnrollments] = await Promise.all([
+      courseService.getAllCoursesAdmin(),
+      enrollmentService.getAllEnrollments(),
+    ]);
 
-    const monthlyRevenue = [
-      { month: 'Aug 2023', revenue: 320000, enrollments: 1240 },
-      { month: 'Sep 2023', revenue: 415000, enrollments: 1580 },
-      { month: 'Oct 2023', revenue: 389000, enrollments: 1420 },
-      { month: 'Nov 2023', revenue: 520000, enrollments: 1890 },
-      { month: 'Dec 2023', revenue: 680000, enrollments: 2340 },
-      { month: 'Jan 2024', revenue: 745000, enrollments: 2680 },
-    ];
+    const enrollments = allEnrollments || [];
+    const courses = allCourses || [];
 
-    const mockUsers = [
-      { id: 'u1', name: 'Priya Sharma', email: 'priya@example.com', role: 'student', joinedAt: '2024-01-01' },
-      { id: 'u2', name: 'Rahul Verma', email: 'rahul@example.com', role: 'student', joinedAt: '2024-01-05' },
-      { id: 'u3', name: 'Dr. Angela Yu', email: 'angela@example.com', role: 'instructor', joinedAt: '2023-01-15' },
-      { id: 'u4', name: 'Maximilian S.', email: 'max@example.com', role: 'instructor', joinedAt: '2023-03-20' },
-      { id: 'u5', name: 'Admin User', email: 'admin@example.com', role: 'admin', joinedAt: '2023-01-01' },
-    ];
+    // Count unique students represented in enrollment records.
+    const studentIds = new Set(
+      enrollments
+        .map((enrollment) => enrollment.studentId || enrollment.student_id)
+        .filter(Boolean)
+    );
+
+    // Count unique instructors represented in course records.
+    const instructorIds = new Set(
+      courses
+        .map((course) => course.instructorId || course.instructor_id)
+        .filter(Boolean)
+    );
+
+    // Build monthly enrollment totals from actual enrollment timestamps.
+    const monthlyMap = new Map();
+
+    for (const enrollment of enrollments) {
+      const dateValue =
+        enrollment.enrolledAt ||
+        enrollment.enrolled_at ||
+        enrollment.createdAt ||
+        enrollment.created_at;
+
+      if (!dateValue) continue;
+
+      const date = new Date(dateValue);
+      if (Number.isNaN(date.getTime())) continue;
+
+      const key = `${date.getFullYear()}-${String(
+        date.getMonth() + 1
+      ).padStart(2, '0')}`;
+
+      if (!monthlyMap.has(key)) {
+        monthlyMap.set(key, {
+          month: date.toLocaleDateString('en', {
+            month: 'short',
+            year: 'numeric',
+          }),
+          enrollments: 0,
+        });
+      }
+
+      monthlyMap.get(key).enrollments += 1;
+    }
+
+    const monthlyEnrollments = [...monthlyMap.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .slice(-12)
+      .map(([, value]) => value);
+
+    const topCourses = [...courses]
+      .sort(
+        (a, b) =>
+          Number(b.enrolledStudents || 0) -
+          Number(a.enrolledStudents || 0)
+      )
+      .slice(0, 5)
+      .map((course) => ({
+        id: course.id,
+        title: course.title,
+        enrolledStudents: Number(course.enrolledStudents || 0),
+        rating: Number(course.rating || 0),
+        price: Number(course.price || 0),
+      }));
 
     res.json({
       success: true,
-      devOnly: true,
-      note: 'DEV ONLY: All statistics are mock data. No real admin operations are performed.',
+      devOnly: false,
       dashboard: {
         overview: {
-          totalStudents: 45820,
-          totalInstructors: 48,
-          totalCourses: allCourses.length,
-          totalEnrollments: 312780,
-          totalRevenue: 28450000,
-          activeUsers: 12340,
+          totalStudents: studentIds.size,
+          totalInstructors: instructorIds.size,
+          totalCourses: courses.length,
+          totalEnrollments: enrollments.length,
+
+          // No payment transaction data has been verified,
+          // so revenue is intentionally unavailable.
+          totalRevenue: null,
         },
-        courses: allCourses,
+        courses,
         categories: mockCategories,
-        recentUsers: mockUsers,
-        monthlyRevenue,
-        topCourses: allCourses
-          .filter((c) => c.status === 'published')
-          .sort((a, b) => b.enrolledStudents - a.enrolledStudents)
-          .slice(0, 5)
-          .map((c) => ({ id: c.id, title: c.title, enrolledStudents: c.enrolledStudents, revenue: c.price * c.enrolledStudents, rating: c.rating })),
+        recentUsers: [],
+        reviews: [],
+        coupons: [],
+        monthlyEnrollments,
+        topCourses,
       },
     });
   }),

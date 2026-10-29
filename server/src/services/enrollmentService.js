@@ -10,14 +10,24 @@ function checkError(error) {
   }
 
   if (error.code === '23503') {
-    throw new ApiError('The selected course or student does not exist.', 400);
+    throw new ApiError(
+      'The selected course or student does not exist.',
+      400
+    );
   }
 
-  throw new ApiError(error.message || 'Enrollment database error', 500);
+  throw new ApiError(
+    error.message || 'Enrollment database error',
+    500
+  );
 }
 
 async function resolveCourseId(courseId) {
-  if (courseId === undefined || courseId === null || courseId === '') {
+  if (
+    courseId === undefined ||
+    courseId === null ||
+    courseId === ''
+  ) {
     throw new ApiError('Course ID is required.', 400);
   }
 
@@ -89,6 +99,7 @@ async function getOwnedEnrollment(enrollmentId, userId) {
 }
 
 const enrollmentService = {
+  // Get enrollments belonging to one student
   async getEnrollments(userId) {
     const { data, error } = await supabase
       .from('enrollments')
@@ -100,8 +111,21 @@ const enrollmentService = {
     return (data || []).map(formatEnrollment);
   },
 
+  // Admin: get all enrollments from the database
+  async getAllEnrollments() {
+    const { data, error } = await supabase
+      .from('enrollments')
+      .select('*, courses(*)')
+      .order('enrolled_at', { ascending: false });
+
+    checkError(error);
+    return (data || []).map(formatEnrollment);
+  },
+
   async getEnrollmentById(id, userId) {
-    return formatEnrollment(await getOwnedEnrollment(id, userId));
+    return formatEnrollment(
+      await getOwnedEnrollment(id, userId)
+    );
   },
 
   async enroll(userId, courseId) {
@@ -117,7 +141,10 @@ const enrollmentService = {
     checkError(findError);
 
     if (existing) {
-      throw new ApiError('You are already enrolled in this course.', 409);
+      throw new ApiError(
+        'You are already enrolled in this course.',
+        409
+      );
     }
 
     const { data, error } = await supabase
@@ -139,8 +166,6 @@ const enrollmentService = {
       throw new ApiError('Lesson ID is required.', 400);
     }
 
-    // The current database schema has no completed_lessons column.
-    // Do not claim lesson completion until a lesson-progress table is added.
     await getOwnedEnrollment(enrollmentId, userId);
 
     throw new ApiError(
@@ -157,7 +182,10 @@ const enrollmentService = {
       numericProgress < 0 ||
       numericProgress > 100
     ) {
-      throw new ApiError('Progress must be between 0 and 100.', 400);
+      throw new ApiError(
+        'Progress must be between 0 and 100.',
+        400
+      );
     }
 
     await getOwnedEnrollment(enrollmentId, userId);

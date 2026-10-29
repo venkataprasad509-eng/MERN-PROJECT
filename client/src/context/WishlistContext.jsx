@@ -1,57 +1,140 @@
-import { createContext, useContext, useState, useCallback } from 'react';
+import {
+  createContext,
+  useContext,
+  useState,
+  useCallback,
+  useEffect,
+} from 'react';
+import { useAuth } from './AuthContext';
 
 const WishlistContext = createContext(null);
 
+const getWishlistKey = (userId) =>
+  userId ? `wishlist_${userId}` : 'wishlist_guest';
+
+const readWishlist = (key) => {
+  try {
+    return JSON.parse(localStorage.getItem(key) || '[]');
+  } catch {
+    return [];
+  }
+};
+
 export const WishlistProvider = ({ children }) => {
-  const [wishlist, setWishlist] = useState(() => {
-    try {
-      return JSON.parse(localStorage.getItem('wishlist') || '[]');
-    } catch { return []; }
-  });
+  const { user, loading: authLoading } = useAuth();
 
-  const save = (items) => {
-    setWishlist(items);
-    localStorage.setItem('wishlist', JSON.stringify(items));
-  };
+  const userId = user?.id || null;
+  const storageKey = getWishlistKey(userId);
 
-  const addToWishlist = useCallback((course) => {
-    setWishlist((prev) => {
-      if (prev.find((c) => c.id === course.id)) return prev;
-      const next = [...prev, { id: course.id, title: course.title, instructor: course.instructor, thumbnail: course.thumbnail, price: course.price, originalPrice: course.originalPrice, rating: course.rating, level: course.level }];
-      localStorage.setItem('wishlist', JSON.stringify(next));
-      return next;
-    });
-  }, []);
+  const [wishlist, setWishlist] = useState(() =>
+    readWishlist(getWishlistKey(null))
+  );
 
-  const removeFromWishlist = useCallback((courseId) => {
-    setWishlist((prev) => {
-      const next = prev.filter((c) => c.id !== courseId);
-      localStorage.setItem('wishlist', JSON.stringify(next));
-      return next;
-    });
-  }, []);
+  // Load the correct wishlist whenever the logged-in user changes.
+  useEffect(() => {
+    if (authLoading) return;
 
-  const isWishlisted = useCallback((courseId) => wishlist.some((c) => c.id === courseId), [wishlist]);
+    setWishlist(readWishlist(storageKey));
+  }, [storageKey, authLoading]);
 
-  const toggleWishlist = useCallback((course) => {
-    if (isWishlisted(course.id)) {
-      removeFromWishlist(course.id);
-      return false;
-    } else {
+  const addToWishlist = useCallback(
+    (course) => {
+      if (!userId) return;
+
+      setWishlist((previous) => {
+        if (
+          previous.some(
+            (item) => String(item.id) === String(course.id)
+          )
+        ) {
+          return previous;
+        }
+
+        const next = [
+          ...previous,
+          {
+            id: course.id,
+            title: course.title,
+            instructor: course.instructor,
+            thumbnail: course.thumbnail,
+            price: course.price,
+            originalPrice: course.originalPrice,
+            rating: course.rating,
+            level: course.level,
+          },
+        ];
+
+        localStorage.setItem(storageKey, JSON.stringify(next));
+        return next;
+      });
+    },
+    [userId, storageKey]
+  );
+
+  const removeFromWishlist = useCallback(
+    (courseId) => {
+      setWishlist((previous) => {
+        const next = previous.filter(
+          (item) => String(item.id) !== String(courseId)
+        );
+
+        localStorage.setItem(storageKey, JSON.stringify(next));
+        return next;
+      });
+    },
+    [storageKey]
+  );
+
+  const isWishlisted = useCallback(
+    (courseId) =>
+      wishlist.some(
+        (item) => String(item.id) === String(courseId)
+      ),
+    [wishlist]
+  );
+
+  const toggleWishlist = useCallback(
+    (course) => {
+      const exists = wishlist.some(
+        (item) => String(item.id) === String(course.id)
+      );
+
+      if (exists) {
+        removeFromWishlist(course.id);
+        return false;
+      }
+
       addToWishlist(course);
       return true;
-    }
-  }, [isWishlisted, addToWishlist, removeFromWishlist]);
+    },
+    [wishlist, addToWishlist, removeFromWishlist]
+  );
 
   return (
-    <WishlistContext.Provider value={{ wishlist, items: wishlist, addToWishlist, removeFromWishlist, isWishlisted, toggleWishlist, count: wishlist.length }}>
+    <WishlistContext.Provider
+      value={{
+        wishlist,
+        items: wishlist,
+        addToWishlist,
+        removeFromWishlist,
+        isWishlisted,
+        toggleWishlist,
+        count: wishlist.length,
+      }}
+    >
       {children}
     </WishlistContext.Provider>
   );
 };
 
 export const useWishlist = () => {
-  const ctx = useContext(WishlistContext);
-  if (!ctx) throw new Error('useWishlist must be used within WishlistProvider');
-  return ctx;
+  const context = useContext(WishlistContext);
+
+  if (!context) {
+    throw new Error(
+      'useWishlist must be used within WishlistProvider'
+    );
+  }
+
+  return context;
 };

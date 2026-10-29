@@ -1,5 +1,5 @@
-
-import { useState } from 'react';
+﻿
+import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
   CheckCircle,
@@ -7,112 +7,161 @@ import {
   ShieldCheck,
   Lock,
   ArrowRight,
+  CreditCard,
 } from 'lucide-react';
+
 import { useCart } from '../context/CartContext';
 import { useAuth } from '../context/AuthContext';
-import { formatPrice } from '../utils/helpers';
-import { toast } from '../utils/toast';
-import { useScrollToTop } from '../hooks/useCustomHooks';
+import { formatPrice } from '../utils/formatPrice';
+import { toast } from 'react-toastify';
+import useScrollToTop from '../hooks/useScrollToTop';
 import cartService from '../services/cartService';
 
 const Checkout = () => {
   useScrollToTop();
 
-  const { items, subtotal, discount, total, coupon } = useCart();
-  const { user } = useAuth();
   const navigate = useNavigate();
+
+  const { items, subtotal, discount, total, coupon, refreshCart } = useCart();
+  const { user } = useAuth();
 
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
   const [orderData, setOrderData] = useState(null);
 
-  const [form, setForm] = useState({
-    name: user?.name || user?.user_metadata?.full_name || '',
+  const [billingDetails, setBillingDetails] = useState({
+    name: user?.user_metadata?.full_name || '',
     email: user?.email || '',
     phone: '',
   });
 
-  const handleChange = (e) => {
-    setForm((previous) => ({
+  const handleBillingChange = (event) => {
+    const { name, value } = event.target;
+
+    setBillingDetails((previous) => ({
       ...previous,
-      [e.target.name]: e.target.value,
+      [name]: value,
     }));
   };
 
-  const handleCheckout = async (e) => {
-    e.preventDefault();
+  const handleCheckout = async (event) => {
+    event.preventDefault();
 
-    if (!form.name.trim() || !form.email.trim()) {
-      toast.error('Please enter your name and email.');
+    if (!billingDetails.name.trim() || !billingDetails.email.trim()) {
+      toast.error('Please enter your name and email address.');
       return;
     }
 
     if (!window.Razorpay) {
-      toast.error(
-        'Razorpay Checkout did not load. Refresh the page and try again.'
-      );
+      toast.error('Razorpay checkout could not be loaded. Please refresh the page.');
+      return;
+    }
+
+    if (!items || items.length === 0) {
+      toast.error('Your cart is empty.');
+      navigate('/cart');
       return;
     }
 
     setLoading(true);
 
     try {
-      // Ask our backend to create an order using database prices.
+      // Create a payment order through your backend.
       const result = await cartService.createPaymentOrder();
 
-      if (!result.success || !result.order?.id || !result.keyId) {
+      if (!result?.success || !result?.order?.id || !result?.keyId) {
         throw new Error(
-          result.message || 'Unable to create the payment order.'
+          result?.message || 'Unable to create payment order.'
         );
       }
 
       const options = {
         key: result.keyId,
         amount: result.order.amount,
-        currency: result.order.currency,
-        name: 'Course Marketplace',
-        description: 'Course purchase',
+        currency: result.order.currency || 'INR',
+
+        name: 'LearnHub',
+        description: 'Online Course Purchase',
         order_id: result.order.id,
 
         prefill: {
-          name: form.name.trim(),
-          email: form.email.trim(),
-          contact: form.phone.trim(),
+          name: billingDetails.name.trim(),
+          email: billingDetails.email.trim(),
+          contact: billingDetails.phone.trim(),
         },
 
         theme: {
-          color: '#4f46e5',
+          color: '#4F46E5',
+        },
+
+        // Configure Razorpay's payment-method selection.
+        // PhonePe availability depends on your Razorpay account
+        // and the UPI options supported for the customer.
+        config: {
+          display: {
+            blocks: {
+              upi: {
+                name: 'Pay using UPI',
+                instruments: [
+                  {
+                    method: 'upi',
+                  },
+                ],
+              },
+
+              other: {
+                name: 'Other Payment Methods',
+                instruments: [
+                  {
+                    method: 'card',
+                  },
+                  {
+                    method: 'netbanking',
+                  },
+                ],
+              },
+            },
+
+            sequence: ['block.upi', 'block.other'],
+
+            preferences: {
+              show_default_blocks: true,
+            },
+          },
         },
 
         handler: async (response) => {
           try {
-            // Send Razorpay's response to the backend for verification.
+            // Verify payment on your backend.
             const verification = await cartService.verifyPayment({
               razorpay_order_id: response.razorpay_order_id,
               razorpay_payment_id: response.razorpay_payment_id,
               razorpay_signature: response.razorpay_signature,
             });
 
-            if (!verification.success) {
+            if (!verification?.success) {
               throw new Error(
-                verification.message || 'Payment verification failed.'
+                verification?.message || 'Payment verification failed.'
               );
             }
 
             setOrderData({
-              orderId: verification.payment.orderId,
-              paymentId: verification.payment.paymentId,
-              total: result.order.amount / 100,
-              paymentMethod: 'Razorpay',
-              status: verification.payment.status,
+              orderId: response.razorpay_order_id,
+              paymentId: response.razorpay_payment_id,
+              amount: total,
             });
 
             setSuccess(true);
-            toast.success('Payment verified successfully.');
+
+            await refreshCart();
+
+            toast.success('Payment successful! Your order is confirmed.');
           } catch (error) {
+            console.error('Payment verification error:', error);
+
             toast.error(
               error.message ||
-                'Payment may have succeeded, but verification failed. Contact support before trying to pay again.'
+                'Payment verification failed. Please contact support if money was deducted.'
             );
           } finally {
             setLoading(false);
@@ -123,288 +172,355 @@ const Checkout = () => {
           ondismiss: () => {
             setLoading(false);
           },
-          escape: true,
         },
       };
 
-      const paymentWindow = new window.Razorpay(options);
+      const razorpay = new window.Razorpay(options);
 
-      paymentWindow.on('payment.failed', (response) => {
-        setLoading(false);
+      razorpay.on('payment.failed', (response) => {
+        console.error('Razorpay payment failed:', response.error);
+
         toast.error(
           response.error?.description || 'Payment failed. Please try again.'
         );
+
+        setLoading(false);
       });
 
-      paymentWindow.open();
+      razorpay.open();
     } catch (error) {
+      console.error('Checkout error:', error);
+
+      toast.error(
+        error.message || 'Unable to start checkout. Please try again.'
+      );
+
       setLoading(false);
-      toast.error(error.message || 'Unable to start checkout.');
     }
   };
 
-  if (success && orderData) {
+  // Payment success screen
+  if (success) {
     return (
-      <div className="page-container py-20 max-w-xl mx-auto text-center">
-        <div className="card p-10 shadow-lg border border-gray-100">
-          <div className="w-16 h-16 bg-green-100 text-green-600 rounded-full flex items-center justify-center mx-auto mb-5">
-            <CheckCircle className="w-10 h-10" />
+      <div className="min-h-screen bg-gray-50 px-4 py-16">
+        <div className="mx-auto max-w-xl rounded-2xl bg-white p-8 text-center shadow-sm">
+          <div className="mx-auto mb-5 flex h-20 w-20 items-center justify-center rounded-full bg-green-100">
+            <CheckCircle className="h-12 w-12 text-green-600" />
           </div>
 
-          <h1 className="text-2xl md:text-3xl font-extrabold text-gray-900 mb-2">
-            Payment Verified!
+          <h1 className="mb-3 text-3xl font-bold text-gray-900">
+            Payment Successful!
           </h1>
 
-          <p className="text-gray-500 text-sm mb-5">
-            Your payment has been verified by the server.
-            Course enrollment still needs to be connected before course access
-            can be confirmed.
+          <p className="mb-6 text-gray-600">
+            Thank you for your purchase. Your payment has been verified.
           </p>
 
-          <div className="bg-gray-50 border border-gray-200 rounded-2xl p-5 mb-6 text-left space-y-3 text-sm">
-            <div className="flex justify-between gap-3">
-              <span className="text-gray-500">Order ID:</span>
-              <span className="font-mono font-bold text-indigo-700 break-all">
-                {orderData.orderId}
-              </span>
-            </div>
+          {orderData && (
+            <div className="mb-6 rounded-xl bg-gray-50 p-5 text-left">
+              <div className="mb-3 flex justify-between gap-4">
+                <span className="text-gray-600">Order ID</span>
+                <span className="break-all text-right font-medium text-gray-900">
+                  {orderData.orderId}
+                </span>
+              </div>
 
-            <div className="flex justify-between gap-3">
-              <span className="text-gray-500">Payment ID:</span>
-              <span className="font-mono text-gray-800 break-all">
-                {orderData.paymentId}
-              </span>
-            </div>
+              <div className="mb-3 flex justify-between gap-4">
+                <span className="text-gray-600">Payment ID</span>
+                <span className="break-all text-right font-medium text-gray-900">
+                  {orderData.paymentId}
+                </span>
+              </div>
 
-            <div className="flex justify-between">
-              <span className="text-gray-500">Amount Paid:</span>
-              <span className="font-bold text-gray-900">
-                {formatPrice(orderData.total)}
-              </span>
+              <div className="flex justify-between gap-4">
+                <span className="text-gray-600">Amount paid</span>
+                <span className="font-bold text-gray-900">
+                  {formatPrice(orderData.amount)}
+                </span>
+              </div>
             </div>
+          )}
 
-            <div className="flex justify-between">
-              <span className="text-gray-500">Payment Method:</span>
-              <span>{orderData.paymentMethod}</span>
-            </div>
-
-            <div className="flex justify-between">
-              <span className="text-gray-500">Payment Status:</span>
-              <span className="font-semibold text-green-600 capitalize">
-                {orderData.status}
-              </span>
-            </div>
-          </div>
-
-          <button
-            onClick={() => navigate('/courses')}
-            className="btn-primary py-3 w-full flex items-center justify-center gap-2"
+          <Link
+            to="/my-courses"
+            className="inline-flex items-center justify-center gap-2 rounded-lg bg-indigo-600 px-6 py-3 font-semibold text-white transition hover:bg-indigo-700"
           >
-            Browse Courses <ArrowRight className="w-4 h-4" />
-          </button>
+            Go to My Courses
+            <ArrowRight className="h-5 w-5" />
+          </Link>
         </div>
       </div>
     );
   }
 
-  if (items.length === 0) {
+  // Empty cart screen
+  if (!items || items.length === 0) {
     return (
-      <div className="page-container py-20 text-center">
-        <ShoppingBag className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-        <h2 className="text-xl font-bold text-gray-700 mb-2">
-          Your cart is empty
-        </h2>
-        <Link to="/courses" className="btn-primary mt-4">
-          Browse Courses
-        </Link>
+      <div className="min-h-screen bg-gray-50 px-4 py-16">
+        <div className="mx-auto max-w-xl rounded-2xl bg-white p-8 text-center shadow-sm">
+          <ShoppingBag className="mx-auto mb-4 h-16 w-16 text-gray-400" />
+
+          <h1 className="mb-3 text-2xl font-bold text-gray-900">
+            Your cart is empty
+          </h1>
+
+          <p className="mb-6 text-gray-600">
+            Add a course to your cart before proceeding to checkout.
+          </p>
+
+          <Link
+            to="/courses"
+            className="inline-flex items-center justify-center gap-2 rounded-lg bg-indigo-600 px-6 py-3 font-semibold text-white hover:bg-indigo-700"
+          >
+            Explore Courses
+            <ArrowRight className="h-5 w-5" />
+          </Link>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="page-container py-10 max-w-6xl">
-      <div className="flex items-center justify-between mb-8">
-        <div>
+    <div className="min-h-screen bg-gray-50 px-4 py-10">
+      <div className="mx-auto max-w-6xl">
+        <div className="mb-8">
           <h1 className="text-3xl font-bold text-gray-900">
-            Checkout & Payment
+            Checkout
           </h1>
-          <p className="text-sm text-gray-500 mt-1">
-            Complete your purchase using Razorpay's secure checkout.
+
+          <p className="mt-2 text-gray-600">
+            Complete your details and securely pay for your courses.
           </p>
         </div>
 
-        <div className="flex items-center gap-2 text-xs text-gray-500 bg-gray-50 px-3 py-2 rounded-full border border-gray-200">
-          <Lock className="w-4 h-4 text-green-600" />
-          Secure payment
-        </div>
-      </div>
+        <form
+          onSubmit={handleCheckout}
+          className="grid grid-cols-1 gap-8 lg:grid-cols-3"
+        >
+          {/* Billing details */}
+          <div className="space-y-6 lg:col-span-2">
+            <section className="rounded-2xl bg-white p-6 shadow-sm">
+              <h2 className="mb-6 flex items-center gap-2 text-xl font-bold text-gray-900">
+                <ShoppingBag className="h-5 w-5 text-indigo-600" />
+                Billing Details
+              </h2>
 
-      <div className="flex flex-col lg:flex-row gap-8">
-        <form onSubmit={handleCheckout} className="flex-1 space-y-6">
-          <div className="card p-6 border border-gray-100 shadow-sm">
-            <h2 className="text-base font-bold text-gray-900 mb-4 flex items-center gap-2">
-              <ShieldCheck className="w-5 h-5 text-indigo-600" />
-              Billing Details
-            </h2>
+              <div className="space-y-5">
+                <div>
+                  <label
+                    htmlFor="name"
+                    className="mb-2 block text-sm font-medium text-gray-700"
+                  >
+                    Full Name
+                  </label>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-xs font-semibold text-gray-700 mb-1">
-                  Full Name *
-                </label>
-                <input
-                  name="name"
-                  type="text"
-                  value={form.name}
-                  onChange={handleChange}
-                  required
-                  placeholder="Your full name"
-                  className="input-field text-sm"
-                />
+                  <input
+                    id="name"
+                    name="name"
+                    type="text"
+                    autoComplete="name"
+                    value={billingDetails.name}
+                    onChange={handleBillingChange}
+                    placeholder="Enter your full name"
+                    required
+                    className="w-full rounded-lg border border-gray-300 px-4 py-3 outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
+                  />
+                </div>
+
+                <div>
+                  <label
+                    htmlFor="email"
+                    className="mb-2 block text-sm font-medium text-gray-700"
+                  >
+                    Email Address
+                  </label>
+
+                  <input
+                    id="email"
+                    name="email"
+                    type="email"
+                    autoComplete="email"
+                    value={billingDetails.email}
+                    onChange={handleBillingChange}
+                    placeholder="Enter your email address"
+                    required
+                    className="w-full rounded-lg border border-gray-300 px-4 py-3 outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
+                  />
+                </div>
+
+                <div>
+                  <label
+                    htmlFor="phone"
+                    className="mb-2 block text-sm font-medium text-gray-700"
+                  >
+                    Phone Number (Optional)
+                  </label>
+
+                  <input
+                    id="phone"
+                    name="phone"
+                    type="tel"
+                    autoComplete="tel"
+                    value={billingDetails.phone}
+                    onChange={handleBillingChange}
+                    placeholder="Enter your phone number"
+                    className="w-full rounded-lg border border-gray-300 px-4 py-3 outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
+                  />
+                </div>
+              </div>
+            </section>
+
+            {/* Payment information */}
+            <section className="rounded-2xl bg-white p-6 shadow-sm">
+              <h2 className="mb-4 flex items-center gap-2 text-xl font-bold text-gray-900">
+                <CreditCard className="h-5 w-5 text-indigo-600" />
+                Payment Method
+              </h2>
+
+              <p className="mb-5 text-gray-600">
+                Choose your available payment method in Razorpay Checkout.
+              </p>
+
+              <div className="space-y-3 rounded-xl border border-gray-200 p-4">
+                <div className="flex items-start gap-3">
+                  <div className="rounded-lg bg-indigo-50 p-2">
+                    <CreditCard className="h-5 w-5 text-indigo-600" />
+                  </div>
+
+                  <div>
+                    <p className="font-semibold text-gray-900">
+                      UPI, Cards and Net Banking
+                    </p>
+
+                    <p className="mt-1 text-sm text-gray-600">
+                      Select UPI in Razorpay to use an available UPI app, such
+                      as PhonePe, when supported.
+                    </p>
+                  </div>
+                </div>
               </div>
 
-              <div>
-                <label className="block text-xs font-semibold text-gray-700 mb-1">
-                  Email Address *
-                </label>
-                <input
-                  name="email"
-                  type="email"
-                  value={form.email}
-                  onChange={handleChange}
-                  required
-                  placeholder="your.email@example.com"
-                  className="input-field text-sm"
-                />
-              </div>
+              <div className="mt-5 flex items-start gap-3 rounded-lg bg-green-50 p-4">
+                <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0 text-green-600" />
 
-              <div className="md:col-span-2">
-                <label className="block text-xs font-semibold text-gray-700 mb-1">
-                  Phone Number (optional)
-                </label>
-                <input
-                  name="phone"
-                  type="tel"
-                  value={form.phone}
-                  onChange={handleChange}
-                  placeholder="Your phone number"
-                  className="input-field text-sm"
-                />
+                <div>
+                  <p className="font-semibold text-green-800">
+                    Secure Checkout
+                  </p>
+
+                  <p className="mt-1 text-sm text-green-700">
+                    Payment is processed through Razorpay. LearnHub does not
+                    directly collect your card or UPI PIN details.
+                  </p>
+                </div>
               </div>
-            </div>
+            </section>
           </div>
 
-          <div className="card p-6 border border-gray-100 shadow-sm">
-            <h2 className="text-base font-bold text-gray-900 mb-3">
-              Payment with Razorpay
-            </h2>
-
-            <p className="text-sm text-gray-600 leading-6">
-              Click the button below to open Razorpay. Available payment
-              options depend on your Razorpay account and checkout settings.
-              Enter payment details only inside the Razorpay checkout window,
-              not on this page.
-            </p>
-          </div>
-
-          <button
-            type="submit"
-            disabled={loading}
-            className="btn-primary w-full py-4 text-base font-bold shadow-md disabled:opacity-60 flex items-center justify-center gap-2"
-          >
-            {loading ? (
-              <>
-                <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                Starting secure checkout...
-              </>
-            ) : (
-              <>
-                <Lock className="w-4 h-4" />
-                Continue to Secure Payment
-              </>
-            )}
-          </button>
-        </form>
-
-        <div className="lg:w-80 shrink-0">
-          <div className="card p-6 sticky top-20 border border-gray-100 shadow-sm">
-            <h2 className="text-base font-bold text-gray-900 mb-4">
+          {/* Order summary */}
+          <aside className="h-fit rounded-2xl bg-white p-6 shadow-sm">
+            <h2 className="mb-6 text-xl font-bold text-gray-900">
               Order Summary
             </h2>
 
-            <div className="space-y-3 mb-5 max-h-72 overflow-y-auto pr-1">
-              {items.map((item, index) => {
-                const title = item.course?.title || item.title || 'Course';
-                const thumbnail =
-                  item.course?.thumbnail ||
-                  item.thumbnail ||
-                  'https://images.unsplash.com/photo-1516321318423-f06f85e504b3?w=200&auto=format';
-
-                const price = Number(
-                  item.course?.price ?? item.price ?? 0
-                );
+            <div className="mb-5 space-y-4">
+              {items.map((item) => {
+                const course = item.course || item;
+                const itemId = item.id || course.id;
 
                 return (
                   <div
-                    key={item.courseId || item.course_id || index}
-                    className="flex gap-3 items-center"
+                    key={itemId}
+                    className="flex items-start gap-3"
                   >
-                    <img
-                      src={thumbnail}
-                      alt={title}
-                      className="w-14 h-10 object-cover rounded-lg shrink-0 border border-gray-100"
-                    />
+                    {course.thumbnail || course.image ? (
+                      <img
+                        src={course.thumbnail || course.image}
+                        alt={course.title || 'Course'}
+                        className="h-16 w-20 rounded-lg object-cover"
+                      />
+                    ) : (
+                      <div className="flex h-16 w-20 items-center justify-center rounded-lg bg-indigo-50">
+                        <ShoppingBag className="h-6 w-6 text-indigo-500" />
+                      </div>
+                    )}
 
-                    <div className="flex-1 min-w-0">
-                      <p className="text-xs font-semibold text-gray-900 line-clamp-1">
-                        {title}
+                    <div className="min-w-0 flex-1">
+                      <p className="line-clamp-2 font-medium text-gray-900">
+                        {course.title || 'Online Course'}
                       </p>
-                      <p className="text-xs text-indigo-700 font-bold">
-                        {formatPrice(price)}
+
+                      <p className="mt-1 text-sm text-gray-500">
+                        Qty: {item.quantity || 1}
                       </p>
                     </div>
+
+                    <span className="whitespace-nowrap text-sm font-semibold text-gray-900">
+                      {formatPrice(
+                        Number(course.price || 0) *
+                          Number(item.quantity || 1)
+                      )}
+                    </span>
                   </div>
                 );
               })}
             </div>
 
-            <div className="border-t border-gray-100 pt-4 space-y-2.5 text-sm">
+            <div className="space-y-3 border-t border-gray-200 pt-5">
               <div className="flex justify-between text-gray-600">
                 <span>Subtotal</span>
                 <span>{formatPrice(subtotal)}</span>
               </div>
 
-              {discount > 0 && (
-                <div className="flex justify-between text-green-600 font-medium">
+              {Number(discount) > 0 && (
+                <div className="flex justify-between text-green-600">
                   <span>
-                    Discount {coupon ? `(${coupon.code})` : ''}
+                    Discount {coupon ? `(${coupon})` : ''}
                   </span>
                   <span>-{formatPrice(discount)}</span>
                 </div>
               )}
 
-              <div className="flex justify-between font-extrabold text-lg pt-3 border-t border-gray-100">
-                <span>Displayed Total</span>
-                <span className="text-indigo-600">
-                  {formatPrice(total)}
-                </span>
+              <div className="flex justify-between border-t border-gray-200 pt-4 text-lg font-bold text-gray-900">
+                <span>Total</span>
+                <span>{formatPrice(total)}</span>
               </div>
-
-              <p className="text-xs text-amber-700 pt-2">
-                The final payment amount is calculated by the backend.
-                Coupon discounts are not yet applied to Razorpay orders.
-              </p>
             </div>
 
-            <div className="mt-5 p-3 rounded-xl bg-gray-50 border border-gray-100 text-[11px] text-gray-500">
-              <div className="flex items-center gap-1.5 font-semibold text-gray-700 mb-1">
-                <ShieldCheck className="w-4 h-4 text-indigo-600" />
-                Secure checkout
-              </div>
-              Your payment details are handled by Razorpay Checkout.
-            </div>
-          </div>
-        </div>
+            <button
+              type="submit"
+              disabled={loading}
+              className="mt-6 flex w-full items-center justify-center gap-2 rounded-lg bg-indigo-600 px-5 py-3 font-semibold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {loading ? (
+                <>
+                  <span className="h-5 w-5 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                  Processing...
+                </>
+              ) : (
+                <>
+                  <Lock className="h-5 w-5" />
+                  Continue to Razorpay — UPI / PhonePe / Cards
+                </>
+              )}
+            </button>
+
+            <p className="mt-4 flex items-center justify-center gap-2 text-center text-xs text-gray-500">
+              <ShieldCheck className="h-4 w-4" />
+              Secure payment powered by Razorpay
+            </p>
+
+            <p className="mt-4 text-center text-sm text-gray-600">
+              Need to change something?{' '}
+              <Link
+                to="/cart"
+                className="font-medium text-indigo-600 hover:text-indigo-700"
+              >
+                Return to cart
+              </Link>
+            </p>
+          </aside>
+        </form>
       </div>
     </div>
   );

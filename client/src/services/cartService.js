@@ -1,5 +1,4 @@
-
-import api from './api';
+﻿import api from './api';
 
 const cartService = {
   getCart: () => api.get('/cart').then((r) => r.data),
@@ -23,6 +22,14 @@ const cartService = {
   // Ask the backend to verify the payment.
   verifyPayment: (paymentDetails) =>
     api.post('/payments/verify', paymentDetails).then((r) => r.data),
+
+  // Send OTP for PhonePe / Mobile checkout
+  sendOtp: (phone) =>
+    api.post('/payments/send-otp', { phone }).then((r) => r.data),
+
+  // Verify OTP and complete PhonePe checkout
+  verifyPhonePe: (data) =>
+    api.post('/payments/verify-phonepe', data).then((r) => r.data),
 };
 
 export default cartService;

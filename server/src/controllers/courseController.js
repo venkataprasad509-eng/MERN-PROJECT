@@ -3,7 +3,6 @@ const { courseService } = require('../services/courseService');
 const { asyncHandler } = require('../middleware/errorHandler');
 
 const courseController = {
-  /** GET /api/courses */
   getAll: asyncHandler(async (req, res) => {
     const {
       search,
@@ -38,16 +37,32 @@ const courseController = {
     res.json({ success: true, ...data });
   }),
 
-  /** GET /api/courses/:id */
+  // Get courses created by the logged-in instructor
+  getMine: asyncHandler(async (req, res) => {
+    const courses = await courseService.getInstructorCourses(
+      req.userSupabase,
+      req.user.id
+    );
+
+    res.json({
+      success: true,
+      courses,
+    });
+  }),
+
   getOne: asyncHandler(async (req, res) => {
     const course = await courseService.getCourseById(req.params.id);
-
     res.json({ success: true, course });
   }),
 
-  /** POST /api/courses */
   create: asyncHandler(async (req, res) => {
-    const course = await courseService.createCourse(req.body);
+    const course = await courseService.createCourse(
+      {
+        ...req.body,
+        instructorId: req.user.id,
+      },
+      req.userSupabase
+    );
 
     res.status(201).json({
       success: true,
@@ -56,7 +71,6 @@ const courseController = {
     });
   }),
 
-  /** PUT /api/courses/:id */
   update: asyncHandler(async (req, res) => {
     const course = await courseService.updateCourse(
       req.params.id,
@@ -70,7 +84,6 @@ const courseController = {
     });
   }),
 
-  /** DELETE /api/courses/:id */
   remove: asyncHandler(async (req, res) => {
     const course = await courseService.deleteCourse(req.params.id);
 

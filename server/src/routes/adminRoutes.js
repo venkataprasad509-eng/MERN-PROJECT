@@ -1,8 +1,10 @@
+
 const { Router } = require('express');
 const { adminController } = require('../controllers/adminController');
 
 const router = Router();
 
+// Admin dashboard
 router.get('/dashboard', adminController.getDashboard);
 
 module.exports = router;

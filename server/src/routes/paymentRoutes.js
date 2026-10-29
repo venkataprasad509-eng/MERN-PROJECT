@@ -230,4 +230,125 @@ router.post('/verify', requireAuth, async (req, res, next) => {
   }
 });
 
+﻿// In-memory OTP storage for phone verification: { [phone]: { otp, expiresAt } }
+const phoneOtpStore = new Map();
+
+// STEP 3: Send OTP for PhonePe / Mobile checkout
+router.post('/send-otp', requireAuth, async (req, res, next) => {
+  try {
+    const { phone } = req.body;
+    if (!phone || phone.trim().length < 10) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide a valid 10-digit mobile number.',
+      });
+    }
+
+    const cleanPhone = phone.trim().replace(/[^0-9]/g, '').slice(-10);
+    // Generate a 6-digit OTP
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const expiresAt = Date.now() + 5 * 60 * 1000; // 5 minutes validity
+
+    phoneOtpStore.set(cleanPhone, { otp, expiresAt });
+    console.log(`[PhonePe Verification] Generated OTP for ${cleanPhone}: ${otp}`);
+
+    return res.status(200).json({
+      success: true,
+      message: `OTP sent successfully to +91 ${cleanPhone}`,
+      otp: otp, // Returned so user / demo modal immediately displays the generated OTP
+      phone: cleanPhone,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// STEP 4: Verify OTP for PhonePe / Mobile checkout and auto-enroll
+router.post('/verify-phonepe', requireAuth, async (req, res, next) => {
+  try {
+    const { phone, otp, upiId } = req.body;
+    if (!phone || !otp) {
+      return res.status(400).json({
+        success: false,
+        message: 'Phone number and OTP are required.',
+      });
+    }
+
+    const cleanPhone = phone.trim().replace(/[^0-9]/g, '').slice(-10);
+    const record = phoneOtpStore.get(cleanPhone);
+
+    if (!record) {
+      return res.status(400).json({
+        success: false,
+        message: 'No OTP requested for this phone number. Please request a new OTP.',
+      });
+    }
+
+    if (Date.now() > record.expiresAt) {
+      phoneOtpStore.delete(cleanPhone);
+      return res.status(400).json({
+        success: false,
+        message: 'OTP has expired. Please request a new OTP.',
+      });
+    }
+
+    if (record.otp !== otp.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid OTP. Please check and enter the correct OTP.',
+      });
+    }
+
+    // OTP verified successfully!
+    phoneOtpStore.delete(cleanPhone);
+
+    const supabase = getUserSupabase(req.accessToken);
+
+    // Fetch user cart
+    const { data: cartRows } = await supabase
+      .from('cart_items')
+      .select('course_id')
+      .eq('user_id', req.user.id);
+
+    const courseIds = (cartRows || []).map((r) => r.course_id);
+
+    // Enroll user into the purchased courses
+    if (courseIds.length > 0) {
+      for (const courseId of courseIds) {
+        await supabase
+          .from('enrollments')
+          .upsert({
+            student_id: req.user.id,
+            course_id: courseId,
+            progress: 0,
+          }, { onConflict: 'student_id,course_id' });
+      }
+
+      // Clear cart
+      await supabase
+        .from('cart_items')
+        .delete()
+        .eq('user_id', req.user.id);
+    }
+
+    const transactionId = 'T26' + Date.now().toString().slice(-9);
+
+    return res.status(200).json({
+      success: true,
+      message: 'Payment verified and courses enrolled successfully via PhonePe!',
+      payment: {
+        orderId: 'ORDER_PHONEPE_' + Date.now(),
+        paymentId: transactionId,
+        status: 'captured',
+        method: 'PhonePe UPI',
+        phone: cleanPhone,
+        upiId: upiId || `${cleanPhone}@ybl`,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+
 module.exports = router;
