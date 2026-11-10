@@ -3,7 +3,7 @@ const express = require('express');
 const cors = require('cors');
 const { errorHandler } = require('./middleware/errorHandler');
 
-// Routes
+// Existing Routes
 const courseRoutes = require('./routes/courseRoutes');
 const categoryRoutes = require('./routes/categoryRoutes');
 const reviewRoutes = require('./routes/reviewRoutes');
@@ -13,6 +13,10 @@ const authRoutes = require('./routes/authRoutes');
 const instructorRoutes = require('./routes/instructorRoutes');
 const adminRoutes = require('./routes/adminRoutes');
 const paymentRoutes = require('./routes/paymentRoutes');
+
+// AI and Chatbot Routes
+const aiRoutes = require('./routes/aiRoutes');
+const chatRoutes = require('./routes/chatRoutes');
 
 const app = express();
 
@@ -25,7 +29,7 @@ app.use(cors({
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
-// Request Logger (development only)
+// Request Logger
 if (process.env.NODE_ENV !== 'production') {
   app.use((req, _res, next) => {
     console.log(
@@ -54,7 +58,7 @@ app.get('/api/health', (_req, res) => {
   });
 });
 
-// API Routes
+// Existing API Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/courses', courseRoutes);
 app.use('/api/categories', categoryRoutes);
@@ -65,9 +69,13 @@ app.use('/api/instructor', instructorRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/payments', paymentRoutes);
 
-// AI routes are registered in server.js
+// AI Routes
+app.use('/api/ai', aiRoutes);
 
-// 404 Handler
+// Chatbot Routes
+app.use('/api/chats', chatRoutes);
+
+// 404 Handler - Must be after ALL routes
 app.use((_req, res) => {
   res.status(404).json({
     success: false,

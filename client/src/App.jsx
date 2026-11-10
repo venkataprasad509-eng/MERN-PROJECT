@@ -1,3 +1,4 @@
+
 import React from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
@@ -25,6 +26,7 @@ import Profile from './pages/Profile';
 import LearningPage from './pages/LearningPage';
 import About from './pages/About';
 import Contact from './pages/Contact';
+import Chatbot from './pages/Chatbot';
 import NotFound from './pages/NotFound';
 
 /**
@@ -94,6 +96,16 @@ const AppRoutes = () => (
       <Route path="/dashboard" element={<ProtectedRoute requiredRole="student"><StudentDashboard /></ProtectedRoute>} />
       <Route path="/instructor" element={<ProtectedRoute requiredRole="instructor"><InstructorDashboard /></ProtectedRoute>} />
       <Route path="/admin" element={<ProtectedRoute requiredRole="admin"><AdminDashboard /></ProtectedRoute>} />
+
+      {/* Chatbot – available to logged-in users */}
+      <Route
+        path="/chatbot"
+        element={
+          <ProtectedRoute>
+            <Chatbot />
+          </ProtectedRoute>
+        }
+      />
     </Route>
 
     {/* Learning page – full screen */}

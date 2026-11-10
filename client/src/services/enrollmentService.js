@@ -86,6 +86,17 @@ const enrollmentService = {
       .then((r) => r.data);
   },
 
+  // Get students enrolled in the logged-in instructor's courses
+  getInstructorStudents: async () => {
+    const auth = await getAuthenticatedRequest();
+
+    return api
+      .get('/enrollments/instructor/students', {
+        headers: auth.headers,
+      })
+      .then((r) => r.data);
+  },
+
   getDashboard: async () => {
     const auth = await getAuthenticatedRequest();
 

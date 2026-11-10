@@ -33,7 +33,6 @@ router.use(optionalAuth);
 // Get the current user's cart.
 router.get('/', cartController.getCart);
 
-//new chnages occured
 
 // Add a course to the cart.
 router.post(

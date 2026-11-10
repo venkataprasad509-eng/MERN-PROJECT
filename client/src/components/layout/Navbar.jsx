@@ -1,8 +1,10 @@
+
 import { useState, useRef, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
   Search, ShoppingCart, Heart, Menu, X, ChevronDown,
-  BookOpen, User, LogOut, LayoutDashboard, GraduationCap
+  BookOpen, User, LogOut, LayoutDashboard, GraduationCap,
+  MessageCircle
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useCart } from '../../context/CartContext';
@@ -148,18 +150,27 @@ const Navbar = () => {
                       <p className="text-xs text-gray-500 truncate">{user?.email}</p>
                       <span className="inline-block px-2 py-0.5 mt-1 bg-indigo-100 text-indigo-700 text-xs font-semibold rounded-full capitalize">{displayRole}</span>
                     </div>
+
                     <Link to={getDashboardPath()} onClick={() => setUserMenuOpen(false)} className="flex items-center gap-2 px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 transition-colors">
                       <LayoutDashboard className="w-4 h-4" /> Dashboard
                     </Link>
+
                     <Link to="/my-courses" onClick={() => setUserMenuOpen(false)} className="flex items-center gap-2 px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 transition-colors">
                       <BookOpen className="w-4 h-4" /> My Courses
                     </Link>
+
+                    <Link to="/chatbot" onClick={() => setUserMenuOpen(false)} className="flex items-center gap-2 px-4 py-2.5 text-sm text-gray-700 hover:bg-indigo-50 hover:text-indigo-600 transition-colors">
+                      <MessageCircle className="w-4 h-4" /> LearnHub AI Chatbot
+                    </Link>
+
                     <Link to="/profile" onClick={() => setUserMenuOpen(false)} className="flex items-center gap-2 px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 transition-colors">
                       <User className="w-4 h-4" /> Profile
                     </Link>
+
                     <button onClick={async () => { await logout(); setUserMenuOpen(false); navigate('/'); }} className="flex items-center gap-2 px-4 py-2.5 text-sm text-red-600 hover:bg-red-50 w-full transition-colors text-left">
                       <LogOut className="w-4 h-4" /> Logout
                     </button>
+
                     {/* Role switcher preview for demo */}
                     <div className="border-t border-gray-100 px-4 py-2">
                       <p className="text-xs text-amber-600 font-semibold mb-1.5">Switch Role Preview</p>
@@ -202,6 +213,7 @@ const Navbar = () => {
                 className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-full text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
               />
             </form>
+
             <div className="grid grid-cols-2 gap-2">
               {CATEGORIES.map((cat) => (
                 <Link key={cat} to={`/courses?category=${encodeURIComponent(cat)}`}
@@ -211,6 +223,18 @@ const Navbar = () => {
                 </Link>
               ))}
             </div>
+
+            {isAuthenticated && (
+              <Link
+                to="/chatbot"
+                onClick={() => setMobileOpen(false)}
+                className="flex items-center gap-2 text-sm font-medium text-indigo-600 hover:text-indigo-700 py-2"
+              >
+                <MessageCircle className="w-5 h-5" />
+                LearnHub AI Chatbot
+              </Link>
+            )}
+
             {!isAuthenticated && (
               <div className="flex gap-2 pt-2">
                 <Link to="/login" onClick={() => setMobileOpen(false)} className="btn-secondary flex-1 text-center text-sm">Log In</Link>

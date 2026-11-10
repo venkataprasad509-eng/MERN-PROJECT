@@ -122,6 +122,122 @@ const enrollmentService = {
     return (data || []).map(formatEnrollment);
   },
 
+  // Instructor: get students enrolled in this instructor's courses
+  async getInstructorStudents(userSupabase, instructorId) {
+    if (!userSupabase) {
+      throw new ApiError(
+        'Authenticated database client is missing.',
+        500
+      );
+    }
+
+    if (!instructorId) {
+      throw new ApiError('Instructor ID is missing.', 400);
+    }
+
+    // 1. Get only this instructor's courses.
+    const { data: courses, error: courseError } = await userSupabase
+      .from('courses')
+      .select('id, legacy_id, title, instructor_id')
+      .eq('instructor_id', instructorId);
+
+    checkError(courseError);
+
+    if (!courses || courses.length === 0) {
+      return {
+        students: [],
+        totalStudents: 0,
+        courseCounts: [],
+      };
+    }
+
+    const courseIds = courses.map((course) => course.id);
+
+    // 2. Get enrollments for those courses only.
+    const { data: enrollments, error: enrollmentError } =
+      await userSupabase
+        .from('enrollments')
+        .select('id, student_id, course_id, enrolled_at')
+        .in('course_id', courseIds)
+        .order('enrolled_at', { ascending: false });
+
+    checkError(enrollmentError);
+
+    if (!enrollments || enrollments.length === 0) {
+      return {
+        students: [],
+        totalStudents: 0,
+        courseCounts: courses.map((course) => ({
+          courseId: String(course.id),
+          courseTitle: course.title,
+          studentCount: 0,
+        })),
+      };
+    }
+
+    // 3. Get the student IDs from enrollments.
+    const studentIds = [
+      ...new Set(enrollments.map((item) => item.student_id)),
+    ];
+
+    // 4. Get student profiles.
+    const { data: profiles, error: profileError } =
+      await userSupabase
+        .from('profiles')
+        .select('id, full_name, email')
+        .in('id', studentIds)
+        .eq('role', 'student');
+
+    checkError(profileError);
+
+    const profileMap = new Map(
+      (profiles || []).map((profile) => [
+        profile.id,
+        profile,
+      ])
+    );
+
+    const courseMap = new Map(
+      courses.map((course) => [
+        String(course.id),
+        course,
+      ])
+    );
+
+    // 5. Build the instructor's student list.
+    const students = enrollments.map((enrollment) => {
+      const profile = profileMap.get(enrollment.student_id);
+      const course = courseMap.get(String(enrollment.course_id));
+
+      return {
+        enrollmentId: String(enrollment.id),
+        studentId: enrollment.student_id,
+        studentName: profile?.full_name || 'Student',
+        studentEmail: profile?.email || '',
+        courseId: course
+          ? String(course.legacy_id || course.id)
+          : String(enrollment.course_id),
+        courseTitle: course?.title || 'Course',
+        enrolledAt: enrollment.enrolled_at,
+      };
+    });
+
+    // 6. Count enrollments for each course.
+    const courseCounts = courses.map((course) => ({
+      courseId: String(course.id),
+      courseTitle: course.title,
+      studentCount: enrollments.filter(
+        (item) => String(item.course_id) === String(course.id)
+      ).length,
+    }));
+
+    return {
+      students,
+      totalStudents: students.length,
+      courseCounts,
+    };
+  },
+
   async getEnrollmentById(id, userId) {
     return formatEnrollment(
       await getOwnedEnrollment(id, userId)

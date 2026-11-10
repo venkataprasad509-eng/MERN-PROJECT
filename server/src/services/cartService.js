@@ -10,7 +10,7 @@ function getSupabase(accessToken) {
   }
 
   if (!accessToken) {
-    const error = new Error('Please log in to use your saved cart.');
+    const error = new Error('Please log in to continue.');
     error.statusCode = 401;
     throw error;
   }
@@ -24,24 +24,6 @@ function getSupabase(accessToken) {
   });
 }
 
-const DEMO_COUPONS = {
-  SAVE10: {
-    discount: 10,
-    type: 'percentage',
-    description: '10% off your order',
-  },
-  FLAT500: {
-    discount: 500,
-    type: 'flat',
-    description: '₹500 off your order',
-  },
-  WELCOME20: {
-    discount: 20,
-    type: 'percentage',
-    description: '20% off for new students',
-  },
-};
-
 function checkError(error) {
   if (error) {
     const err = new Error(error.message);
@@ -52,7 +34,6 @@ function checkError(error) {
 
 async function resolveCourseId(supabase, courseId) {
   const value = String(courseId);
-
   let query;
 
   if (value.startsWith('course-')) {
@@ -188,31 +169,136 @@ async function clearCart(userId, accessToken) {
   checkError(error);
 }
 
-async function applyCoupon(code) {
+async function validateCoupon(code, userId, accessToken, courseIds) {
   const normalizedCode = String(code || '').trim().toUpperCase();
-  const coupon = DEMO_COUPONS[normalizedCode];
+
+  if (!normalizedCode) {
+    throw new Error('Please enter a coupon code.');
+  }
+
+  if (!userId) {
+    const error = new Error('Please log in to apply a coupon.');
+    error.statusCode = 401;
+    throw error;
+  }
+
+  if (!Array.isArray(courseIds) || courseIds.length === 0) {
+    const error = new Error('Please select at least one course.');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const supabase = getSupabase(accessToken);
+
+  // Fetch the coupon from Supabase.
+  const { data: coupon, error: couponError } = await supabase
+    .from('coupons')
+    .select('*')
+    .eq('code', normalizedCode)
+    .maybeSingle();
+
+  checkError(couponError);
 
   if (!coupon) {
-    return {
-      success: false,
-      message: 'Invalid coupon code',
-    };
+    throw new Error('Invalid coupon code.');
   }
+
+  if (!coupon.is_active) {
+    throw new Error('This coupon is currently inactive.');
+  }
+
+  if (coupon.expires_at && new Date(coupon.expires_at) <= new Date()) {
+    throw new Error('This coupon has expired.');
+  }
+
+  if (
+    coupon.max_uses !== null &&
+    coupon.max_uses !== undefined &&
+    Number(coupon.usage_count) >= Number(coupon.max_uses)
+  ) {
+    throw new Error('This coupon has reached its usage limit.');
+  }
+
+  // Check whether the student has ever enrolled in a course.
+  if (coupon.new_students_only) {
+    const { data: enrollments, error: enrollmentError } = await supabase
+      .from('enrollments')
+      .select('id')
+      .eq('student_id', userId)
+      .limit(1);
+
+    checkError(enrollmentError);
+
+    if (enrollments && enrollments.length > 0) {
+      throw new Error('This coupon is only available to new students.');
+    }
+  }
+
+  // Fetch actual course prices from Supabase.
+  const uniqueCourseIds = [...new Set(courseIds.map(String))];
+
+  const courses = await Promise.all(
+    uniqueCourseIds.map((id) => resolveCourseId(supabase, id))
+  );
+
+  let subtotal = courses.reduce(
+    (sum, course) => sum + Number(course.price || 0),
+    0
+  );
+
+  if (subtotal <= 0) {
+    throw new Error('Invalid order amount.');
+  }
+
+  const discountValue = Number(coupon.discount_value);
+
+  let discountAmount;
+
+  if (coupon.discount_type === 'percentage') {
+    discountAmount = subtotal * (discountValue / 100);
+  } else if (coupon.discount_type === 'fixed') {
+    discountAmount = discountValue;
+  } else {
+    throw new Error('Invalid coupon discount type.');
+  }
+
+  // Discount cannot exceed the subtotal.
+  discountAmount = Math.min(discountAmount, subtotal);
+
+  subtotal = Number(subtotal.toFixed(2));
+  discountAmount = Number(discountAmount.toFixed(2));
+
+  const payableTotal = Number(
+    (subtotal - discountAmount).toFixed(2)
+  );
 
   return {
     success: true,
     coupon: {
-      code: normalizedCode,
-      ...coupon,
+      id: coupon.id,
+      code: coupon.code,
+      discount_type: coupon.discount_type,
+      discount_value: discountValue,
+      new_students_only: coupon.new_students_only,
     },
+    subtotal,
+    discountAmount,
+    payableTotal,
   };
 }
 
-function getAvailableCoupons() {
-  return Object.entries(DEMO_COUPONS).map(([code, data]) => ({
-    code,
-    ...data,
-  }));
+async function getAvailableCoupons(accessToken) {
+  const supabase = getSupabase(accessToken);
+
+  const { data, error } = await supabase
+    .from('coupons')
+    .select('code, discount_type, discount_value, expires_at')
+    .eq('is_active', true)
+    .order('created_at', { ascending: false });
+
+  checkError(error);
+
+  return data || [];
 }
 
 module.exports = {
@@ -221,7 +307,7 @@ module.exports = {
     addItem,
     removeItem,
     clearCart,
-    applyCoupon,
+    validateCoupon,
     getAvailableCoupons,
   },
 };

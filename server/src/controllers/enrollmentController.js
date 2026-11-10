@@ -4,7 +4,10 @@ const { asyncHandler } = require('../middleware/errorHandler');
 
 const enrollmentController = {
   getEnrollments: asyncHandler(async (req, res) => {
-    const enrollments = await enrollmentService.getEnrollments(req.user.id);
+    const enrollments = await enrollmentService.getEnrollments(
+      req.user.id
+    );
+
     res.json({ success: true, enrollments });
   }),
 
@@ -15,6 +18,19 @@ const enrollmentController = {
     );
 
     res.json({ success: true, enrollment });
+  }),
+
+  // Instructor: get students enrolled in their courses
+  getInstructorStudents: asyncHandler(async (req, res) => {
+    const result = await enrollmentService.getInstructorStudents(
+      req.userSupabase,
+      req.user.id
+    );
+
+    res.json({
+      success: true,
+      ...result,
+    });
   }),
 
   enroll: asyncHandler(async (req, res) => {

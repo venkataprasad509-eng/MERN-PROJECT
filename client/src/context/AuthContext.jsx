@@ -4,12 +4,14 @@ import supabase from '../services/supabase';
 
 const AuthContext = createContext(null);
 
-const formatUser = (supabaseUser) => {
+const formatUser = (supabaseUser, profile = null) => {
   if (!supabaseUser) return null;
 
   const meta = supabaseUser.user_metadata || {};
   const email = supabaseUser.email || '';
+
   const name =
+    profile?.full_name ||
     meta.full_name ||
     meta.name ||
     email.split('@')[0] ||
@@ -17,45 +19,35 @@ const formatUser = (supabaseUser) => {
 
   return {
     id: supabaseUser.id,
-    email,
+    email: profile?.email || email,
     name,
-    role: meta.role || 'student',
+    // Read the actual role from the profiles table first.
+    role: profile?.role || meta.role || 'student',
     avatar:
       meta.avatar_url ||
       meta.avatar ||
       `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(name)}`,
     ...meta,
+    // Keep the database role even if metadata contains another role.
+    role: profile?.role || meta.role || 'student',
   };
 };
 
-const saveProfile = async (supabaseUser) => {
-  if (!supabaseUser?.id) return;
+// Fetch the user's actual profile and role from Supabase.
+const getFormattedUser = async (supabaseUser) => {
+  if (!supabaseUser?.id) return null;
 
-  const meta = supabaseUser.user_metadata || {};
-  const email = supabaseUser.email || '';
-  const name =
-    meta.full_name ||
-    meta.name ||
-    email.split('@')[0] ||
-    'User';
-
-  const { error } = await supabase
+  const { data: profile, error } = await supabase
     .from('profiles')
-    .upsert(
-      {
-        id: supabaseUser.id,
-        full_name: name,
-        avatar_url:
-          meta.avatar_url ||
-          meta.avatar ||
-          `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(name)}`,
-      },
-      { onConflict: 'id' }
-    );
+    .select('id, full_name, email, role')
+    .eq('id', supabaseUser.id)
+    .maybeSingle();
 
   if (error) {
-    console.error('Could not save profile:', error.message);
+    console.error('Could not fetch user profile:', error.message);
   }
+
+  return formatUser(supabaseUser, profile);
 };
 
 export const AuthProvider = ({ children }) => {
@@ -65,7 +57,7 @@ export const AuthProvider = ({ children }) => {
   useEffect(() => {
     let active = true;
 
-    const getSession = async () => {
+    const loadSession = async () => {
       try {
         const {
           data: { session },
@@ -75,8 +67,9 @@ export const AuthProvider = ({ children }) => {
         if (error) throw error;
 
         if (session?.user) {
-          if (active) setUser(formatUser(session.user));
-          await saveProfile(session.user);
+          const formatted = await getFormattedUser(session.user);
+
+          if (active) setUser(formatted);
         } else {
           const saved = localStorage.getItem('demo_user');
 
@@ -95,23 +88,22 @@ export const AuthProvider = ({ children }) => {
       }
     };
 
-    getSession();
+    loadSession();
 
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((event, session) => {
       if (session?.user) {
-        if (active) setUser(formatUser(session.user));
-
         localStorage.removeItem('demo_user');
         localStorage.setItem('demo_session_id', session.user.id);
 
-        // Avoid awaiting database requests inside this callback.
-        if (event === 'SIGNED_IN' || event === 'USER_UPDATED') {
-          setTimeout(() => {
-            saveProfile(session.user);
-          }, 0);
-        }
+        // Fetch the database role after the auth event.
+        Promise.resolve().then(async () => {
+          const formatted = await getFormattedUser(session.user);
+
+          if (active) setUser(formatted);
+          if (active) setLoading(false);
+        });
       } else {
         const saved = localStorage.getItem('demo_user');
 
@@ -125,10 +117,10 @@ export const AuthProvider = ({ children }) => {
           } else {
             setUser(null);
           }
+
+          setLoading(false);
         }
       }
-
-      if (active) setLoading(false);
     });
 
     return () => {
@@ -140,6 +132,12 @@ export const AuthProvider = ({ children }) => {
   const loginUser = (supabaseUser) => {
     const formatted = formatUser(supabaseUser);
     setUser(formatted);
+
+    // Refresh the role from the database.
+    getFormattedUser(supabaseUser).then((updatedUser) => {
+      if (updatedUser) setUser(updatedUser);
+    });
+
     return formatted;
   };
 

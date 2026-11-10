@@ -1,6 +1,5 @@
 
 const { cartService } = require('../services/cartService');
-const { courseService } = require('../services/courseService');
 const { enrollmentService } = require('../services/enrollmentService');
 const { asyncHandler, ApiError } = require('../middleware/errorHandler');
 
@@ -18,6 +17,7 @@ function requireCartUser(req) {
 const cartController = {
   getCart: asyncHandler(async (req, res) => {
     const { userId, accessToken } = requireCartUser(req);
+
     const cart = await cartService.getCart(userId, accessToken);
 
     res.json({ success: true, cart });
@@ -61,34 +61,57 @@ const cartController = {
   }),
 
   applyCoupon: asyncHandler(async (req, res) => {
-    requireCartUser(req);
+    const { userId, accessToken } = requireCartUser(req);
 
-    const { code } = req.body;
+    const { code, courseId, courseIds } = req.body || {};
 
     if (!code) {
       throw new ApiError('Coupon code is required.', 400);
     }
 
-    const result = await cartService.applyCoupon(code);
+    // Support Buy Now and Cart Checkout.
+    let selectedCourseIds = [];
 
-    if (!result.success) {
-      throw new ApiError(result.message, 400);
+    if (Array.isArray(courseIds)) {
+      selectedCourseIds = courseIds;
+    } else if (courseId) {
+      selectedCourseIds = [courseId];
+    } else {
+      // If no course IDs are provided, use the logged-in user's cart.
+      const cart = await cartService.getCart(userId, accessToken);
+
+      selectedCourseIds = cart.items.map((item) => item.courseId);
     }
+
+    if (selectedCourseIds.length === 0) {
+      throw new ApiError('Please select at least one course.', 400);
+    }
+
+    const result = await cartService.validateCoupon(
+      code,
+      userId,
+      accessToken,
+      selectedCourseIds
+    );
 
     res.json({
       success: true,
-      message: `Coupon '${code}' applied successfully`,
+      message: `Coupon '${result.coupon.code}' applied successfully.`,
       coupon: result.coupon,
+      subtotal: result.subtotal,
+      discountAmount: result.discountAmount,
+      payableTotal: result.payableTotal,
     });
   }),
 
-  getCoupons: asyncHandler(async (_req, res) => {
-    const coupons = cartService.getAvailableCoupons();
+  getCoupons: asyncHandler(async (req, res) => {
+    const { accessToken } = requireCartUser(req);
+
+    const coupons = await cartService.getAvailableCoupons(accessToken);
 
     res.json({
       success: true,
       coupons,
-      note: 'Available coupons for order discount',
     });
   }),
 
@@ -102,7 +125,8 @@ const cartController = {
       throw new ApiError('Cart is empty.', 400);
     }
 
-    // This records enrollments; it does not process a real payment.
+    // Legacy checkout endpoint. Real payments are handled
+    // separately through the Razorpay payment integration.
     const enrolledCourses = [];
 
     for (const item of cart.items) {

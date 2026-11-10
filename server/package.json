@@ -1,7 +1,10 @@
 {
-  "name": "course-marketplace-server",
+  "name": "learnhub-api",
   "version": "1.0.0",
   "description": "Online Course Marketplace - Express Backend",
+  "engines": {
+    "node": ">=22.12.0 <25"
+  },
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",

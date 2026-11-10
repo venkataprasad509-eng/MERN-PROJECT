@@ -1,6 +1,6 @@
 ﻿
 import React, { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import {
   CheckCircle,
   ShoppingBag,
@@ -8,6 +8,8 @@ import {
   Lock,
   ArrowRight,
   CreditCard,
+  Tag,
+  X,
 } from 'lucide-react';
 
 import { useCart } from '../context/CartContext';
@@ -21,9 +23,38 @@ const Checkout = () => {
   useScrollToTop();
 
   const navigate = useNavigate();
+  const location = useLocation();
 
-  const { items, subtotal, discount, total, coupon, refreshCart } = useCart();
+  const { items, subtotal, refreshCart } = useCart();
   const { user } = useAuth();
+
+  // Buy Now course, if selected.
+  const buyNowCourse = location.state?.buyNowCourse || null;
+  const isBuyNow = Boolean(buyNowCourse);
+
+  // Courses selected for checkout.
+  const checkoutItems = isBuyNow
+    ? [{ course: buyNowCourse, quantity: 1 }]
+    : items || [];
+
+  const buyNowTotal = Number(buyNowCourse?.price || 0);
+
+  const checkoutSubtotal = isBuyNow
+    ? buyNowTotal
+    : Number(subtotal || 0);
+
+  // Coupon states.
+  const [couponCode, setCouponCode] = useState('');
+  const [appliedCoupon, setAppliedCoupon] = useState(null);
+  const [couponLoading, setCouponLoading] = useState(false);
+
+  const checkoutDiscount = appliedCoupon
+    ? Number(appliedCoupon.discountAmount || 0)
+    : 0;
+
+  const checkoutTotal = appliedCoupon
+    ? Number(appliedCoupon.payableTotal)
+    : checkoutSubtotal;
 
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
@@ -44,6 +75,75 @@ const Checkout = () => {
     }));
   };
 
+  // Apply coupon using backend validation.
+  const handleApplyCoupon = async () => {
+    const code = couponCode.trim().toUpperCase();
+
+    if (!code) {
+      toast.error('Please enter a coupon code.');
+      return;
+    }
+
+    if (!checkoutItems.length) {
+      toast.error('Please select at least one course.');
+      return;
+    }
+
+    setCouponLoading(true);
+
+    try {
+      const selectedCourseIds = checkoutItems.map((item) =>
+        String((item.course || item).id)
+      );
+
+      const payload = isBuyNow
+        ? {
+            code,
+            courseId: selectedCourseIds[0],
+          }
+        : {
+            code,
+            courseIds: selectedCourseIds,
+          };
+
+      const result = await cartService.applyCoupon(payload);
+
+      if (!result?.success) {
+        throw new Error(result?.message || 'Unable to apply coupon.');
+      }
+
+      setAppliedCoupon({
+        ...result.coupon,
+        subtotal: Number(result.subtotal),
+        discountAmount: Number(result.discountAmount),
+        payableTotal: Number(result.payableTotal),
+      });
+
+      setCouponCode(result.coupon.code);
+
+      toast.success('Coupon applied successfully!');
+    } catch (error) {
+      console.error('Apply coupon error:', error);
+
+      setAppliedCoupon(null);
+
+      toast.error(
+        error.response?.data?.message ||
+          error.message ||
+          'Invalid coupon code.'
+      );
+    } finally {
+      setCouponLoading(false);
+    }
+  };
+
+  // Remove applied coupon.
+  const handleRemoveCoupon = () => {
+    setAppliedCoupon(null);
+    setCouponCode('');
+    toast.info('Coupon removed.');
+  };
+
   const handleCheckout = async (event) => {
     event.preventDefault();
 
@@ -53,36 +153,73 @@ const Checkout = () => {
     }
 
     if (!window.Razorpay) {
-      toast.error('Razorpay checkout could not be loaded. Please refresh the page.');
+      toast.error(
+        'Razorpay checkout could not be loaded. Please refresh the page.'
+      );
       return;
     }
 
-    if (!items || items.length === 0) {
+    if (!checkoutItems.length) {
       toast.error('Your cart is empty.');
       navigate('/cart');
+      return;
+    }
+
+    if (!Number.isFinite(checkoutTotal) || checkoutTotal <= 0) {
+      toast.error('Invalid checkout amount.');
       return;
     }
 
     setLoading(true);
 
     try {
-      // Create a payment order through your backend.
-      const result = await cartService.createPaymentOrder();
+      // Prepare selected course IDs.
+      const selectedCourseIds = checkoutItems.map((item) =>
+        String((item.course || item).id)
+      );
 
-      if (!result?.success || !result?.order?.id || !result?.keyId) {
+      // Buy Now sends one course.
+      // Cart Checkout sends all selected courses.
+      const paymentPayload = isBuyNow
+        ? { courseId: selectedCourseIds[0] }
+        : { courseIds: selectedCourseIds };
+
+      // Send coupon code to backend for final validation.
+      if (appliedCoupon) {
+        paymentPayload.couponCode = appliedCoupon.code;
+      }
+
+      const result = await cartService.createPaymentOrder(paymentPayload);
+
+      const paymentData = result?.data || result;
+      const order = paymentData?.order || {};
+
+      const orderId = order.id || paymentData?.orderId;
+
+      const keyId =
+        paymentData?.keyId || paymentData?.razorpayKeyId;
+
+      if (!result?.success || !orderId || !keyId) {
         throw new Error(
           result?.message || 'Unable to create payment order.'
         );
       }
 
+      // Use the amount returned by the backend.
+      const razorpayAmount = order.amount || paymentData.amount;
+
       const options = {
-        key: result.keyId,
-        amount: result.order.amount,
-        currency: result.order.currency || 'INR',
+        key: keyId,
+        amount: razorpayAmount,
+        currency: order.currency || paymentData.currency || 'INR',
 
         name: 'LearnHub',
-        description: 'Online Course Purchase',
-        order_id: result.order.id,
+
+        description: isBuyNow
+          ? `Purchase: ${buyNowCourse.title}`
+          : 'Online Course Purchase',
+
+        order_id: orderId,
 
         prefill: {
           name: billingDetails.name.trim(),
@@ -94,45 +231,34 @@ const Checkout = () => {
           color: '#4F46E5',
         },
 
-        // Configure Razorpay's payment-method selection.
-        // PhonePe availability depends on your Razorpay account
-        // and the UPI options supported for the customer.
+        // Show only UPI, Cards and Net Banking.
+        // Hide default wallets such as MobiKwik.
         config: {
           display: {
             blocks: {
               upi: {
                 name: 'Pay using UPI',
                 instruments: [
-                  {
-                    method: 'upi',
-                  },
+                  { method: 'upi' },
                 ],
               },
-
               other: {
-                name: 'Other Payment Methods',
+                name: 'Cards and Net Banking',
                 instruments: [
-                  {
-                    method: 'card',
-                  },
-                  {
-                    method: 'netbanking',
-                  },
+                  { method: 'card' },
+                  { method: 'netbanking' },
                 ],
               },
             },
-
             sequence: ['block.upi', 'block.other'],
-
             preferences: {
-              show_default_blocks: true,
+              show_default_blocks: false,
             },
           },
         },
 
         handler: async (response) => {
           try {
-            // Verify payment on your backend.
             const verification = await cartService.verifyPayment({
               razorpay_order_id: response.razorpay_order_id,
               razorpay_payment_id: response.razorpay_payment_id,
@@ -145,17 +271,33 @@ const Checkout = () => {
               );
             }
 
+            const verifiedData = verification.data || {};
+
             setOrderData({
               orderId: response.razorpay_order_id,
               paymentId: response.razorpay_payment_id,
-              amount: total,
+
+              // Backend amount is stored in paise.
+              amount:
+                Number(verifiedData.amount ?? razorpayAmount) / 100,
+
+              discountAmount: Number(
+                verifiedData.discountAmount || 0
+              ),
+
+              couponCode: verifiedData.couponCode || '',
             });
 
             setSuccess(true);
 
-            await refreshCart();
+            // Refresh cart only after Cart Checkout.
+            if (!isBuyNow) {
+              await refreshCart();
+            }
 
-            toast.success('Payment successful! Your order is confirmed.');
+            toast.success(
+              'Payment successful! Your order is confirmed.'
+            );
           } catch (error) {
             console.error('Payment verification error:', error);
 
@@ -181,7 +323,8 @@ const Checkout = () => {
         console.error('Razorpay payment failed:', response.error);
 
         toast.error(
-          response.error?.description || 'Payment failed. Please try again.'
+          response.error?.description ||
+            'Payment failed. Please try again.'
         );
 
         setLoading(false);
@@ -192,14 +335,16 @@ const Checkout = () => {
       console.error('Checkout error:', error);
 
       toast.error(
-        error.message || 'Unable to start checkout. Please try again.'
+        error.response?.data?.message ||
+          error.message ||
+          'Unable to start checkout. Please try again.'
       );
 
       setLoading(false);
     }
   };
 
-  // Payment success screen
+  // Payment success screen.
   if (success) {
     return (
       <div className="min-h-screen bg-gray-50 px-4 py-16">
@@ -232,6 +377,24 @@ const Checkout = () => {
                 </span>
               </div>
 
+              {orderData.couponCode && (
+                <div className="mb-3 flex justify-between gap-4">
+                  <span className="text-gray-600">Coupon</span>
+                  <span className="font-medium text-green-600">
+                    {orderData.couponCode}
+                  </span>
+                </div>
+              )}
+
+              {orderData.discountAmount > 0 && (
+                <div className="mb-3 flex justify-between gap-4">
+                  <span className="text-gray-600">Discount</span>
+                  <span className="font-medium text-green-600">
+                    -{formatPrice(orderData.discountAmount)}
+                  </span>
+                </div>
+              )}
+
               <div className="flex justify-between gap-4">
                 <span className="text-gray-600">Amount paid</span>
                 <span className="font-bold text-gray-900">
@@ -253,8 +416,8 @@ const Checkout = () => {
     );
   }
 
-  // Empty cart screen
-  if (!items || items.length === 0) {
+  // Empty checkout screen.
+  if (!checkoutItems.length) {
     return (
       <div className="min-h-screen bg-gray-50 px-4 py-16">
         <div className="mx-auto max-w-xl rounded-2xl bg-white p-8 text-center shadow-sm">
@@ -297,8 +460,8 @@ const Checkout = () => {
           onSubmit={handleCheckout}
           className="grid grid-cols-1 gap-8 lg:grid-cols-3"
         >
-          {/* Billing details */}
           <div className="space-y-6 lg:col-span-2">
+            {/* Billing details */}
             <section className="rounded-2xl bg-white p-6 shadow-sm">
               <h2 className="mb-6 flex items-center gap-2 text-xl font-bold text-gray-900">
                 <ShoppingBag className="h-5 w-5 text-indigo-600" />
@@ -393,8 +556,8 @@ const Checkout = () => {
                     </p>
 
                     <p className="mt-1 text-sm text-gray-600">
-                      Select UPI in Razorpay to use an available UPI app, such
-                      as PhonePe, when supported.
+                      Select UPI in Razorpay to use an available UPI app,
+                      such as PhonePe, when supported.
                     </p>
                   </div>
                 </div>
@@ -419,14 +582,22 @@ const Checkout = () => {
 
           {/* Order summary */}
           <aside className="h-fit rounded-2xl bg-white p-6 shadow-sm">
-            <h2 className="mb-6 text-xl font-bold text-gray-900">
+            <h2 className="mb-2 text-xl font-bold text-gray-900">
               Order Summary
             </h2>
 
+            <p className="mb-6 text-sm text-gray-500">
+              {isBuyNow ? 'Buy Now — Selected Course' : 'Cart Checkout'}
+            </p>
+
+            {/* Selected courses */}
             <div className="mb-5 space-y-4">
-              {items.map((item) => {
+              {checkoutItems.map((item, index) => {
                 const course = item.course || item;
-                const itemId = item.id || course.id;
+                const itemId = course.id || item.id || index;
+                const quantity = isBuyNow
+                  ? 1
+                  : Number(item.quantity || 1);
 
                 return (
                   <div
@@ -450,15 +621,16 @@ const Checkout = () => {
                         {course.title || 'Online Course'}
                       </p>
 
-                      <p className="mt-1 text-sm text-gray-500">
-                        Qty: {item.quantity || 1}
-                      </p>
+                      {!isBuyNow && (
+                        <p className="mt-1 text-sm text-gray-500">
+                          Qty: {quantity}
+                        </p>
+                      )}
                     </div>
 
                     <span className="whitespace-nowrap text-sm font-semibold text-gray-900">
                       {formatPrice(
-                        Number(course.price || 0) *
-                          Number(item.quantity || 1)
+                        Number(course.price || 0) * quantity
                       )}
                     </span>
                   </div>
@@ -466,30 +638,83 @@ const Checkout = () => {
               })}
             </div>
 
+            {/* Coupon section */}
+            <div className="mb-5 border-t border-gray-200 pt-5">
+              <h3 className="mb-3 flex items-center gap-2 font-semibold text-gray-900">
+                <Tag className="h-5 w-5 text-indigo-600" />
+                Apply Coupon
+              </h3>
+
+              {appliedCoupon ? (
+                <div className="rounded-lg border border-green-200 bg-green-50 p-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="font-semibold text-green-800">
+                        {appliedCoupon.code}
+                      </p>
+
+                      <p className="mt-1 text-sm text-green-700">
+                        Coupon applied successfully!
+                      </p>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={handleRemoveCoupon}
+                      className="rounded-lg p-2 text-red-600 transition hover:bg-red-100"
+                      title="Remove coupon"
+                    >
+                      <X className="h-5 w-5" />
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={couponCode}
+                    onChange={(event) =>
+                      setCouponCode(event.target.value.toUpperCase())
+                    }
+                    placeholder="Enter coupon code"
+                    className="min-w-0 flex-1 rounded-lg border border-gray-300 px-3 py-3 uppercase outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
+                  />
+
+                  <button
+                    type="button"
+                    onClick={handleApplyCoupon}
+                    disabled={couponLoading || !couponCode.trim()}
+                    className="rounded-lg bg-indigo-600 px-4 py-3 font-semibold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {couponLoading ? 'Applying...' : 'Apply'}
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* Price details */}
             <div className="space-y-3 border-t border-gray-200 pt-5">
               <div className="flex justify-between text-gray-600">
                 <span>Subtotal</span>
-                <span>{formatPrice(subtotal)}</span>
+                <span>{formatPrice(checkoutSubtotal)}</span>
               </div>
 
-              {Number(discount) > 0 && (
+              {checkoutDiscount > 0 && (
                 <div className="flex justify-between text-green-600">
-                  <span>
-                    Discount {coupon ? `(${coupon})` : ''}
-                  </span>
-                  <span>-{formatPrice(discount)}</span>
+                  <span>Coupon Discount</span>
+                  <span>-{formatPrice(checkoutDiscount)}</span>
                 </div>
               )}
 
               <div className="flex justify-between border-t border-gray-200 pt-4 text-lg font-bold text-gray-900">
                 <span>Total</span>
-                <span>{formatPrice(total)}</span>
+                <span>{formatPrice(checkoutTotal)}</span>
               </div>
             </div>
 
             <button
               type="submit"
-              disabled={loading}
+              disabled={loading || couponLoading}
               className="mt-6 flex w-full items-center justify-center gap-2 rounded-lg bg-indigo-600 px-5 py-3 font-semibold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
             >
               {loading ? (
@@ -500,7 +725,7 @@ const Checkout = () => {
               ) : (
                 <>
                   <Lock className="h-5 w-5" />
-                  Continue to Razorpay — UPI / PhonePe / Cards
+                  Continue to Razorpay
                 </>
               )}
             </button>

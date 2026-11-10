@@ -8,8 +8,13 @@ const { mockCourses } = require('../data/mockCourses');
  */
 function formatCourse(row) {
   return {
-    id: row.legacy_id || String(row.id),
+    // Always use the actual Supabase BIGINT ID.
+    id: row.id,
     databaseId: row.id,
+
+    // Keep legacy ID separately.
+    legacyId: row.legacy_id || null,
+
     title: row.title,
     shortDescription: row.short_description || '',
     description: row.description || '',
@@ -85,7 +90,6 @@ function toDatabase(data) {
     }
   }
 
-  // Keep thumbnail and image URL synchronized.
   if (data.thumbnail !== undefined && data.imageUrl === undefined) {
     result.image_url = data.thumbnail;
   }
@@ -126,7 +130,7 @@ async function getRowById(id) {
       }
     }
   } catch (_) {
-    // Continue to the mock-data fallback.
+    // Continue to mock-data fallback.
   }
 
   const mockMatch = mockCourses.find(
@@ -171,7 +175,6 @@ const courseService = {
 
   /**
    * Get courses belonging to a specific instructor.
-   * Uses the authenticated user's Supabase client.
    */
   async getInstructorCourses(userSupabase, instructorId) {
     if (!userSupabase) {
@@ -232,6 +235,7 @@ const courseService = {
     }
 
     const { data, error } = await query;
+
     handleDatabaseError(error);
 
     let result = (data || []).map(formatCourse);
@@ -320,7 +324,9 @@ const courseService = {
     };
   },
 
-  /** Get one course by its ID. */
+  /**
+   * Get one course by its ID.
+   */
   async getCourseById(id) {
     return getRowById(id);
   },
@@ -358,7 +364,9 @@ const courseService = {
     return formatCourse(created);
   },
 
-  /** Update a course. */
+  /**
+   * Update a course.
+   */
   async updateCourse(id, data) {
     const current = await getRowById(id);
     const payload = toDatabase(data);
@@ -375,7 +383,9 @@ const courseService = {
     return formatCourse(updated);
   },
 
-  /** Delete a course. */
+  /**
+   * Delete a course.
+   */
   async deleteCourse(id) {
     const current = await getRowById(id);
 

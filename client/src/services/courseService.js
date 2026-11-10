@@ -1,9 +1,10 @@
 
 import api from './api';
+import supabase from './supabase';
 
 /**
  * Course service – all course-related API calls.
- * Fetches from the Express backend, not from local mock data directly.
+ * Fetches from the Express backend.
  */
 const courseService = {
   // Get all courses
@@ -57,9 +58,27 @@ const courseService = {
     api.get(`/reviews/course/${courseId}`, { params })
       .then((r) => r.data),
 
-  // Submit a review
-  submitReview: (data) =>
-    api.post('/reviews', data).then((r) => r.data),
+  // Submit a review using the logged-in user's Supabase token
+  submitReview: async (data) => {
+    const { data: sessionData, error } =
+      await supabase.auth.getSession();
+
+    if (error) {
+      throw error;
+    }
+
+    const accessToken = sessionData?.session?.access_token;
+
+    if (!accessToken) {
+      throw new Error('Please log in before submitting a review.');
+    }
+
+    return api.post('/reviews', data, {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+    }).then((r) => r.data);
+  },
 };
 
 export default courseService;
