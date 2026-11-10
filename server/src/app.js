@@ -15,10 +15,23 @@ const adminRoutes = require('./routes/adminRoutes');
 const paymentRoutes = require('./routes/paymentRoutes');
 
 const app = express();
+const allowedClientOrigins = (process.env.CLIENT_URL || 'http://localhost:5173')
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+const vercelPreviewOrigin =
+  /^https:\/\/course-market-frontend-[a-z0-9-]+-dragon20\.vercel\.app$/;
 
 // Middleware
 app.use(cors({
-  origin: process.env.CLIENT_URL || 'http://localhost:5173',
+  origin: (origin, callback) => {
+    const isAllowed =
+      !origin ||
+      allowedClientOrigins.includes(origin) ||
+      vercelPreviewOrigin.test(origin);
+
+    callback(null, isAllowed);
+  },
   credentials: true,
 }));
 
