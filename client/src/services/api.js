@@ -5,7 +5,9 @@ import supabase from './supabase';
 const api = axios.create({
   baseURL:
     import.meta.env.VITE_API_URL ||
-    (import.meta.env.PROD ? '/api' : 'http://localhost:5000/api'),
+    (import.meta.env.PROD
+      ? 'https://learnhub-backend-87mo.onrender.com/api'
+      : 'http://localhost:5000/api'),
 
   // Allow enough time for AI responses
   timeout: 120000,
