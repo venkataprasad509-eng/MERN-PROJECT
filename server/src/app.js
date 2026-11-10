@@ -36,6 +36,14 @@ if (process.env.NODE_ENV !== 'production') {
 }
 
 // Health Check
+app.get('/', (_req, res) => {
+  res.status(200).json({
+    success: true,
+    message: 'LearnHub API is running',
+    healthCheck: '/api/health',
+  });
+});
+
 app.get('/api/health', (_req, res) => {
   res.status(200).json({
     success: true,
