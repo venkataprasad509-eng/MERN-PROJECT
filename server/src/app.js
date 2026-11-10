@@ -3,7 +3,10 @@ const express = require('express');
 const cors = require('cors');
 const { errorHandler } = require('./middleware/errorHandler');
 
-// Existing Routes
+// ========================================
+// EXISTING ROUTES
+// ========================================
+
 const courseRoutes = require('./routes/courseRoutes');
 const categoryRoutes = require('./routes/categoryRoutes');
 const reviewRoutes = require('./routes/reviewRoutes');
@@ -19,41 +22,96 @@ const aiRoutes = require('./routes/aiRoutes');
 const chatRoutes = require('./routes/chatRoutes');
 
 const app = express();
-const allowedClientOrigins = (process.env.CLIENT_URL || 'http://localhost:5173')
+
+// ========================================
+// CORS CONFIGURATION
+// ========================================
+
+// Allowed frontend origins
+const allowedOrigins = [
+  'http://localhost:5173',
+  'https://course-market-frontend.vercel.app',
+];
+
+// Add CLIENT_URL from Render environment variables
+const configuredOrigins = (process.env.CLIENT_URL || '')
   .split(',')
   .map((origin) => origin.trim())
   .filter(Boolean);
+
+// Combine and remove duplicate origins
+const allowedClientOrigins = [
+  ...new Set([...allowedOrigins, ...configuredOrigins]),
+];
+
+// Vercel preview deployment support
 const vercelPreviewOrigin =
-  /^https:\/\/course-market-frontend-[a-z0-9-]+-dragon20\.vercel\.app$/;
+  /^https:\/\/course-market-frontend-[a-z0-9-]+\.vercel\.app$/i;
 
-// Middleware
-app.use(cors({
-  origin: (origin, callback) => {
-    const isAllowed =
-      !origin ||
-      allowedClientOrigins.includes(origin) ||
-      vercelPreviewOrigin.test(origin);
+// Apply CORS only once
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      // Allow requests without an Origin header
+      if (!origin) {
+        return callback(null, true);
+      }
 
-    callback(null, isAllowed);
-  },
-  credentials: true,
-}));
+      const isAllowed =
+        allowedClientOrigins.includes(origin) ||
+        vercelPreviewOrigin.test(origin);
+
+      if (isAllowed) {
+        return callback(null, true);
+      }
+
+      console.error('CORS blocked origin:', origin);
+
+      return callback(new Error(`CORS blocked origin: ${origin}`));
+    },
+    credentials: true,
+    methods: [
+      'GET',
+      'POST',
+      'PUT',
+      'PATCH',
+      'DELETE',
+      'OPTIONS',
+    ],
+    allowedHeaders: [
+      'Content-Type',
+      'Authorization',
+      'x-session-id',
+    ],
+  })
+);
+
+// ========================================
+// BODY PARSER MIDDLEWARE
+// ========================================
 
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
-// Request Logger
+// ========================================
+// REQUEST LOGGER
+// ========================================
+
 if (process.env.NODE_ENV !== 'production') {
-  app.use((req, _res, next) => {
+  app.use((req, res, next) => {
     console.log(
       `[${new Date().toISOString()}] ${req.method} ${req.originalUrl}`
     );
+
     next();
   });
 }
 
-// Health Check
-app.get('/', (_req, res) => {
+// ========================================
+// HEALTH CHECK
+// ========================================
+
+app.get('/', (req, res) => {
   res.status(200).json({
     success: true,
     message: 'LearnHub API is running',
@@ -61,7 +119,7 @@ app.get('/', (_req, res) => {
   });
 });
 
-app.get('/api/health', (_req, res) => {
+app.get('/api/health', (req, res) => {
   res.status(200).json({
     success: true,
     message: 'Course Marketplace API is running',
@@ -71,25 +129,57 @@ app.get('/api/health', (_req, res) => {
   });
 });
 
-// Existing API Routes
+// ========================================
+// AUTHENTICATION ROUTES
+// ========================================
+
 app.use('/api/auth', authRoutes);
+
+// ========================================
+// COURSE ROUTES
+// ========================================
+
 app.use('/api/courses', courseRoutes);
 app.use('/api/categories', categoryRoutes);
 app.use('/api/reviews', reviewRoutes);
+
+// ========================================
+// CART AND ENROLLMENT ROUTES
+// ========================================
+
 app.use('/api/cart', cartRoutes);
 app.use('/api/enrollments', enrollmentRoutes);
+
+// ========================================
+// INSTRUCTOR AND ADMIN ROUTES
+// ========================================
+
 app.use('/api/instructor', instructorRoutes);
 app.use('/api/admin', adminRoutes);
+
+// ========================================
+// PAYMENT ROUTES
+// ========================================
+
 app.use('/api/payments', paymentRoutes);
 
-// AI Routes
+// ========================================
+// AI ROUTES
+// ========================================
+
 app.use('/api/ai', aiRoutes);
 
-// Chatbot Routes
+// ========================================
+// CHATBOT ROUTES
+// ========================================
+
 app.use('/api/chats', chatRoutes);
 
-// 404 Handler - Must be after ALL routes
-app.use((_req, res) => {
+// ========================================
+// 404 HANDLER
+// ========================================
+
+app.use((req, res) => {
   res.status(404).json({
     success: false,
     message: 'Route not found',
@@ -97,7 +187,10 @@ app.use((_req, res) => {
   });
 });
 
-// Centralized Error Handler
+// ========================================
+// CENTRALIZED ERROR HANDLER
+// ========================================
+
 app.use(errorHandler);
 
 module.exports = app;

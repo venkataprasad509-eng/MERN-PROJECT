@@ -1,3 +1,5 @@
+
+
 # LearnHub
 
 LearnHub is a course marketplace built with React, Express, Supabase, and MongoDB. Students can browse courses, enroll, track learning, and manage wishlists; instructors and administrators have separate management tools.
