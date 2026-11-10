@@ -40,20 +40,29 @@ const Chatbot = () => {
 
   // Load previous conversations
   useEffect(() => {
-    loadChats();
-  }, []);
+    let active = true;
 
-  const loadChats = async () => {
-    try {
-      setPageLoading(true);
-      const response = await chatService.getChats();
-      setChats(response.chats || []);
-    } catch (err) {
-      setError(err.message || 'Unable to load conversations.');
-    } finally {
-      setPageLoading(false);
-    }
-  };
+    chatService.getChats()
+      .then((response) => {
+        if (active) {
+          setChats(response.chats || []);
+        }
+      })
+      .catch((err) => {
+        if (active) {
+          setError(err.message || 'Unable to load conversations.');
+        }
+      })
+      .finally(() => {
+        if (active) {
+          setPageLoading(false);
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
 
   // Create a new conversation
   const handleNewChat = async () => {
