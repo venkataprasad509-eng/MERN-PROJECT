@@ -3,11 +3,12 @@ import { useState, useEffect } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import {
   Clock, Users, BarChart2, Globe, Award, CheckCircle, Play,
-  ShoppingCart, Heart, Star, BookOpen, AlertCircle
+  ShoppingCart, Heart, Star, BookOpen, AlertCircle, ClipboardList
 } from 'lucide-react';
 
 import courseService from '../services/courseService';
 import lessonService from '../services/lessonService';
+import assessmentService from '../services/assessmentService';
 import { useCart } from '../context/CartContext';
 import { useWishlist } from '../context/WishlistContext';
 import StarRating from '../components/common/StarRating';
@@ -29,6 +30,7 @@ const CourseDetails = () => {
   const [course, setCourse] = useState(null);
   const [lessons, setLessons] = useState([]);
   const [reviews, setReviews] = useState([]);
+  const [assessments, setAssessments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
@@ -65,6 +67,7 @@ const CourseDetails = () => {
         setCourse(currentCourse);
         setReviews(reviewData.reviews || []);
 
+        // Load course lessons.
         try {
           const lessonData = await lessonService.getLessons(
             currentCourse.id
@@ -79,6 +82,27 @@ const CourseDetails = () => {
           if (active) {
             setLessons([]);
             toast.error('Unable to load course lessons.');
+          }
+        }
+
+        // Load published assignments and quizzes.
+        try {
+          const assessmentData =
+            await assessmentService.getStudentAssessments(
+              currentCourse.id
+            );
+
+          if (active) {
+            setAssessments(assessmentData.data || []);
+          }
+        } catch (assessmentError) {
+          console.log(
+            'Assessments are unavailable:',
+            assessmentError.message
+          );
+
+          if (active) {
+            setAssessments([]);
           }
         }
       } catch (err) {
@@ -305,6 +329,102 @@ const CourseDetails = () => {
                           ? `${lesson.duration} min`
                           : 'Video'}
                       </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </section>
+
+            {/* Assignments & Quizzes */}
+            <section className="card p-6 mb-6">
+              <div className="flex items-center justify-between mb-4">
+                <div>
+                  <h2 className="text-xl font-bold">
+                    Assignments & Quizzes
+                  </h2>
+
+                  <p className="text-sm text-gray-500 mt-1">
+                    Test your knowledge and complete course assignments.
+                  </p>
+                </div>
+
+                <ClipboardList className="w-7 h-7 text-indigo-600" />
+              </div>
+
+              {assessments.length === 0 ? (
+                <div className="text-center py-8 border border-gray-200 rounded-lg">
+                  <ClipboardList className="w-9 h-9 mx-auto text-gray-400 mb-2" />
+
+                  <p className="text-gray-500 text-sm">
+                    No published assignments or quizzes are available yet.
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {assessments.map((assessment) => (
+                    <div
+                      key={assessment._id}
+                      className="border border-gray-200 rounded-xl p-4 hover:border-indigo-300 transition-colors"
+                    >
+                      <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+                        <div className="flex items-start gap-3">
+                          <div className="p-2 bg-indigo-50 rounded-lg">
+                            <ClipboardList className="w-5 h-5 text-indigo-600" />
+                          </div>
+
+                          <div>
+                            <h3 className="font-semibold text-gray-900">
+                              {assessment.title}
+                            </h3>
+
+                            <span
+                              className={`inline-block mt-2 px-2.5 py-1 rounded-full text-xs font-semibold ${
+                                assessment.type === 'quiz'
+                                  ? 'bg-purple-100 text-purple-700'
+                                  : 'bg-blue-100 text-blue-700'
+                              }`}
+                            >
+                              {assessment.type === 'quiz'
+                                ? 'Quiz'
+                                : 'Assignment'}
+                            </span>
+                          </div>
+                        </div>
+
+                        <span className="text-sm font-medium text-gray-600">
+                          {assessment.maxMarks} marks
+                        </span>
+                      </div>
+
+                      {assessment.description && (
+                        <p className="text-sm text-gray-600 mt-3">
+                          {assessment.description}
+                        </p>
+                      )}
+
+                      <div className="flex flex-wrap gap-4 mt-4 text-xs text-gray-500">
+                        {assessment.dueDate && (
+                          <span className="flex items-center gap-1">
+                            <Clock className="w-4 h-4" />
+                            Due: {new Date(
+                              assessment.dueDate
+                            ).toLocaleDateString()}
+                          </span>
+                        )}
+
+                        {assessment.type === 'quiz' && assessment.timeLimit && (
+                          <span className="flex items-center gap-1">
+                            <Clock className="w-4 h-4" />
+                            Time limit: {assessment.timeLimit} minutes
+                          </span>
+                        )}
+
+                        {assessment.type === 'quiz' && (
+                          <span>
+                            {assessment.questions?.length || 0} questions
+                          </span>
+                        )}
+                      </div>
                     </div>
                   ))}
                 </div>

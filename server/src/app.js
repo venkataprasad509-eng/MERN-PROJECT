@@ -21,63 +21,45 @@ const paymentRoutes = require('./routes/paymentRoutes');
 const aiRoutes = require('./routes/aiRoutes');
 const chatRoutes = require('./routes/chatRoutes');
 
+// Assignments and Quizzes
+const assessmentRoutes = require('./routes/assessmentRoutes');
+
 const app = express();
 
 // ========================================
 // CORS CONFIGURATION
 // ========================================
 
-// Allowed frontend origins
 const allowedOrigins = [
   'http://localhost:5173',
   'https://course-market-frontend.vercel.app',
 ];
 
-// Add CLIENT_URL from Render environment variables
 const configuredOrigins = (process.env.CLIENT_URL || '')
   .split(',')
   .map((origin) => origin.trim())
   .filter(Boolean);
 
-// Combine and remove duplicate origins
 const allowedClientOrigins = [
   ...new Set([...allowedOrigins, ...configuredOrigins]),
 ];
 
-// Vercel preview deployment support
-const vercelPreviewOrigin =
-  /^https:\/\/course-market-frontend-[a-z0-9-]+\.vercel\.app$/i;
-
-// Apply CORS only once
 app.use(
   cors({
     origin: (origin, callback) => {
-      // Allow requests without an Origin header
       if (!origin) {
         return callback(null, true);
       }
 
-      const isAllowed =
-        allowedClientOrigins.includes(origin) ||
-        vercelPreviewOrigin.test(origin);
-
-      if (isAllowed) {
+      if (allowedClientOrigins.includes(origin)) {
         return callback(null, true);
       }
 
       console.error('CORS blocked origin:', origin);
-
       return callback(new Error(`CORS blocked origin: ${origin}`));
     },
     credentials: true,
-    methods: [
-      'GET',
-      'POST',
-      'PUT',
-      'PATCH',
-      'DELETE',
-      'OPTIONS',
-    ],
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: [
       'Content-Type',
       'Authorization',
@@ -162,6 +144,12 @@ app.use('/api/admin', adminRoutes);
 // ========================================
 
 app.use('/api/payments', paymentRoutes);
+
+// ========================================
+// ASSIGNMENTS AND QUIZZES ROUTES
+// ========================================
+
+app.use('/api/assessments', assessmentRoutes);
 
 // ========================================
 // AI ROUTES

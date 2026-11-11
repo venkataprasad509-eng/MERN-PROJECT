@@ -1,5 +1,6 @@
 
 import InstructorStudents from '../components/InstructorStudents';
+import AssessmentManager from '../components/AssessmentManager';
 import { useState, useEffect, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import {
@@ -42,6 +43,7 @@ const NAV_ITEMS = [
   { id: 'courses', label: 'My Courses', icon: BookOpen },
   { id: 'lessons', label: 'Lessons & Videos', icon: Video },
   { id: 'students', label: 'My Students', icon: Users },
+  { id: 'assessments', label: 'Assignments & Quizzes', icon: BookMarked },
 ];
 
 const InstructorDashboard = () => {
@@ -776,6 +778,11 @@ const InstructorDashboard = () => {
             {/* My Students */}
             {activeSection === 'students' && (
               <InstructorStudents />
+            )}
+
+            {/* Assignments and Quizzes */}
+            {activeSection === 'assessments' && (
+              <AssessmentManager courses={courses} />
             )}
 
           </main>

@@ -99,7 +99,30 @@ async function getOwnedEnrollment(enrollmentId, userId) {
 }
 
 const enrollmentService = {
-  // Get enrollments belonging to one student
+  // Check whether a student is enrolled in a course.
+  async isStudentEnrolled(userSupabase, courseId, studentId) {
+    if (!userSupabase || !studentId) {
+      throw new ApiError(
+        'Student authentication is required.',
+        401
+      );
+    }
+
+    const course = await resolveCourseId(courseId);
+
+    const { data, error } = await userSupabase
+      .from('enrollments')
+      .select('id')
+      .eq('student_id', studentId)
+      .eq('course_id', course.id)
+      .maybeSingle();
+
+    checkError(error);
+
+    return Boolean(data);
+  },
+
+  // Get enrollments belonging to one student.
   async getEnrollments(userId) {
     const { data, error } = await supabase
       .from('enrollments')
@@ -111,7 +134,7 @@ const enrollmentService = {
     return (data || []).map(formatEnrollment);
   },
 
-  // Admin: get all enrollments from the database
+  // Admin: get all enrollments from the database.
   async getAllEnrollments() {
     const { data, error } = await supabase
       .from('enrollments')
@@ -122,7 +145,7 @@ const enrollmentService = {
     return (data || []).map(formatEnrollment);
   },
 
-  // Instructor: get students enrolled in this instructor's courses
+  // Instructor: get students enrolled in this instructor's courses.
   async getInstructorStudents(userSupabase, instructorId) {
     if (!userSupabase) {
       throw new ApiError(
@@ -135,7 +158,6 @@ const enrollmentService = {
       throw new ApiError('Instructor ID is missing.', 400);
     }
 
-    // 1. Get only this instructor's courses.
     const { data: courses, error: courseError } = await userSupabase
       .from('courses')
       .select('id, legacy_id, title, instructor_id')
@@ -153,7 +175,6 @@ const enrollmentService = {
 
     const courseIds = courses.map((course) => course.id);
 
-    // 2. Get enrollments for those courses only.
     const { data: enrollments, error: enrollmentError } =
       await userSupabase
         .from('enrollments')
@@ -175,12 +196,10 @@ const enrollmentService = {
       };
     }
 
-    // 3. Get the student IDs from enrollments.
     const studentIds = [
       ...new Set(enrollments.map((item) => item.student_id)),
     ];
 
-    // 4. Get student profiles.
     const { data: profiles, error: profileError } =
       await userSupabase
         .from('profiles')
@@ -204,7 +223,6 @@ const enrollmentService = {
       ])
     );
 
-    // 5. Build the instructor's student list.
     const students = enrollments.map((enrollment) => {
       const profile = profileMap.get(enrollment.student_id);
       const course = courseMap.get(String(enrollment.course_id));
@@ -222,7 +240,6 @@ const enrollmentService = {
       };
     });
 
-    // 6. Count enrollments for each course.
     const courseCounts = courses.map((course) => ({
       courseId: String(course.id),
       courseTitle: course.title,
